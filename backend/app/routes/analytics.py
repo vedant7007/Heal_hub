@@ -1,24 +1,51 @@
 from fastapi import APIRouter, Depends
 from app.database import patients_collection, checkins_collection, alerts_collection
-from app.routes.doctors import get_current_doctor
+from app.routes.doctors import require_roles
 from app.utils.helpers import utc_now
-from datetime import timedelta
 
 router = APIRouter()
 
 
-@router.get("/overview")
-async def get_overview(doctor=Depends(get_current_doctor)):
-    doctor_id = doctor["_id"]
+def _patient_filter(doctor: dict) -> dict:
+    """Return a Mongo filter for patients — nurses see all, doctors see their own."""
+    if doctor.get("role") == "nurse":
+        return {"is_active": True}
+    return {"doctor_id": doctor["_id"], "is_active": True}
 
-    total_patients = await patients_collection.count_documents({"doctor_id": doctor_id, "is_active": True})
+
+def _alert_filter(doctor: dict) -> dict:
+    if doctor.get("role") == "nurse":
+        return {}
+    return {"doctor_id": doctor["_id"]}
+
+
+def _checkin_lookup_match(doctor: dict) -> dict:
+    """Build $match expression inside the checkins→patients $lookup pipeline."""
+    if doctor.get("role") == "nurse":
+        return {"$expr": {"$eq": [{"$toString": "$_id"}, "$$pid"]}}
+    return {
+        "$expr": {
+            "$and": [
+                {"$eq": [{"$toString": "$_id"}, "$$pid"]},
+                {"$eq": ["$doctor_id", doctor["_id"]]},
+            ]
+        }
+    }
+
+
+@router.get("/overview")
+async def get_overview(doctor=Depends(require_roles("doctor", "nurse"))):
+    pf = _patient_filter(doctor)
+    af = _alert_filter(doctor)
+
+    total_patients = await patients_collection.count_documents(pf)
     active_alerts = await alerts_collection.count_documents(
-        {"doctor_id": doctor_id, "status": {"$in": ["new", "seen", "acknowledged"]}}
+        {**af, "status": {"$in": ["new", "seen", "acknowledged"]}}
     )
 
     # Average recovery score
     pipeline = [
-        {"$match": {"doctor_id": doctor_id, "is_active": True}},
+        {"$match": pf},
         {"$group": {"_id": None, "avg_score": {"$avg": "$risk_score"}}},
     ]
     avg_score = 0
@@ -28,13 +55,30 @@ async def get_overview(doctor=Depends(get_current_doctor)):
     # Check-ins today
     now = utc_now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    checkins_today = await checkins_collection.count_documents(
-        {"created_at": {"$gte": today_start}}
-    )
+    checkins_today_pipeline = [
+        {"$match": {"created_at": {"$gte": today_start}}},
+        {
+            "$lookup": {
+                "from": "patients",
+                "let": {"pid": "$patient_id"},
+                "pipeline": [
+                    {"$match": _checkin_lookup_match(doctor)},
+                    {"$project": {"_id": 1}},
+                ],
+                "as": "patient",
+            }
+        },
+        {"$match": {"patient.0": {"$exists": True}}},
+        {"$count": "count"},
+    ]
+    checkins_today = 0
+    checkins_today_docs = await checkins_collection.aggregate(checkins_today_pipeline).to_list(length=1)
+    if checkins_today_docs:
+        checkins_today = checkins_today_docs[0]["count"]
 
     # Status distribution
     status_pipeline = [
-        {"$match": {"doctor_id": doctor_id, "is_active": True}},
+        {"$match": pf},
         {"$group": {"_id": "$current_status", "count": {"$sum": 1}}},
     ]
     status_dist = {}
@@ -51,9 +95,9 @@ async def get_overview(doctor=Depends(get_current_doctor)):
 
 
 @router.get("/recovery-trends")
-async def get_recovery_trends(doctor=Depends(get_current_doctor)):
+async def get_recovery_trends(doctor=Depends(require_roles("doctor", "nurse"))):
     pipeline = [
-        {"$match": {"doctor_id": doctor["_id"], "is_active": True}},
+        {"$match": _patient_filter(doctor)},
         {
             "$group": {
                 "_id": "$surgery_type",
@@ -73,9 +117,20 @@ async def get_recovery_trends(doctor=Depends(get_current_doctor)):
 
 
 @router.get("/complications")
-async def get_complications(doctor=Depends(get_current_doctor)):
-    # Get symptom frequencies from check-ins
+async def get_complications(doctor=Depends(require_roles("doctor", "nurse"))):
     pipeline = [
+        {
+            "$lookup": {
+                "from": "patients",
+                "let": {"pid": "$patient_id"},
+                "pipeline": [
+                    {"$match": _checkin_lookup_match(doctor)},
+                    {"$project": {"_id": 1}},
+                ],
+                "as": "patient",
+            }
+        },
+        {"$match": {"patient.0": {"$exists": True}}},
         {"$unwind": "$symptoms_detected"},
         {"$group": {"_id": "$symptoms_detected", "count": {"$sum": 1}}},
         {"$sort": {"count": -1}},
@@ -88,9 +143,20 @@ async def get_complications(doctor=Depends(get_current_doctor)):
 
 
 @router.get("/response-rates")
-async def get_response_rates(doctor=Depends(get_current_doctor)):
-    # Simplified: total check-ins grouped by type
+async def get_response_rates(doctor=Depends(require_roles("doctor", "nurse"))):
     pipeline = [
+        {
+            "$lookup": {
+                "from": "patients",
+                "let": {"pid": "$patient_id"},
+                "pipeline": [
+                    {"$match": _checkin_lookup_match(doctor)},
+                    {"$project": {"_id": 1}},
+                ],
+                "as": "patient",
+            }
+        },
+        {"$match": {"patient.0": {"$exists": True}}},
         {"$group": {"_id": "$type", "count": {"$sum": 1}}},
     ]
     rates = {}

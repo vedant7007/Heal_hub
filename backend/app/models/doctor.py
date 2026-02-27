@@ -1,19 +1,20 @@
+from typing import Literal, Optional
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
 from datetime import datetime
 
 
 class DoctorRegister(BaseModel):
     name: str
-    email: str
+    email: EmailStr
     password: str
     phone: str = ""
     specialization: str = ""
     hospital: str = ""
+    role: Literal["doctor", "nurse"] = "doctor"
 
 
 class DoctorLogin(BaseModel):
-    email: str
+    email: EmailStr
     password: str
 
 
@@ -24,6 +25,7 @@ class DoctorResponse(BaseModel):
     phone: str = ""
     specialization: str = ""
     hospital: str = ""
+    role: Literal["doctor", "nurse"] = "doctor"
     created_at: Optional[datetime] = None
 
     class Config:
@@ -32,9 +34,10 @@ class DoctorResponse(BaseModel):
 
 class DoctorInDB(BaseModel):
     name: str
-    email: str
+    email: EmailStr
     password: str
     phone: str = ""
     specialization: str = ""
     hospital: str = ""
+    role: Literal["doctor", "nurse"] = "doctor"
     created_at: datetime = None

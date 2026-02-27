@@ -35,7 +35,7 @@ async def seed():
     db = client.get_default_database("healhub")
 
     # Clear existing data
-    for col in ["doctors", "patients", "checkins", "alerts", "conversations"]:
+    for col in ["doctors", "patients", "checkins", "alerts", "conversations", "call_sessions"]:
         await db[col].delete_many({})
 
     print("Cleared existing data")
@@ -53,6 +53,7 @@ async def seed():
             "phone": "+919876543210",
             "specialization": "Orthopedic Surgery",
             "hospital": "Apollo Hospital, Hyderabad",
+            "role": "doctor",
             "created_at": days_ago(30),
         },
         {
@@ -63,6 +64,7 @@ async def seed():
             "phone": "+919876543211",
             "specialization": "Cardiac Surgery",
             "hospital": "KIMS Hospital, Hyderabad",
+            "role": "doctor",
             "created_at": days_ago(30),
         },
     ]

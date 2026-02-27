@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import socketio
 from app.config import get_settings
-from app.database import ping_db
+from app.database import ensure_indexes, ping_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Socket.IO server
-sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
+sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins=settings.SOCKET_CORS_ORIGINS)
 
 app = FastAPI(
     title="Heal Hub API",
@@ -24,7 +24,7 @@ app = FastAPI(
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -68,6 +68,11 @@ async def startup_event():
     db_ok = await ping_db()
     if db_ok:
         logger.info("MongoDB connected successfully")
+        try:
+            await ensure_indexes()
+            logger.info("MongoDB indexes ensured")
+        except Exception as e:
+            logger.warning(f"Failed to ensure indexes: {e}")
     else:
         logger.warning("MongoDB connection failed - running in degraded mode")
 

@@ -38,6 +38,17 @@ async def get_current_doctor(credentials: HTTPAuthorizationCredentials = Depends
     return objectid_to_str(doctor)
 
 
+def require_roles(*allowed_roles: str):
+    allowed = set(allowed_roles)
+
+    async def _checker(doctor=Depends(get_current_doctor)):
+        if doctor.get("role", "doctor") not in allowed:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return doctor
+
+    return _checker
+
+
 @router.post("/register")
 async def register(data: DoctorRegister):
     existing = await doctors_collection.find_one({"email": data.email})
@@ -51,11 +62,20 @@ async def register(data: DoctorRegister):
         "phone": data.phone,
         "specialization": data.specialization,
         "hospital": data.hospital,
+        "role": data.role,
         "created_at": utc_now(),
     }
     result = await doctors_collection.insert_one(doc)
     token = create_token(str(result.inserted_id))
-    return {"token": token, "doctor": {"id": str(result.inserted_id), "name": data.name, "email": data.email}}
+    return {
+        "token": token,
+        "doctor": {
+            "id": str(result.inserted_id),
+            "name": data.name,
+            "email": data.email,
+            "role": data.role,
+        },
+    }
 
 
 @router.post("/login")
