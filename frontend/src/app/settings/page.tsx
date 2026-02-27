@@ -1,327 +1,338 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import {
-  Save,
-  Calendar,
-  Gauge,
-  Stethoscope,
-  Clock,
-  Settings2,
-  Sparkles,
+  User, Bell, Shield, Palette, Calendar,
+  Save, Loader2, Sun, Moon, Monitor,
 } from "lucide-react";
+import { useTheme } from "next-themes";
+import { AppShell } from "@/components/layout/AppShell";
+import { PageWrapper } from "@/components/shared/PageWrapper";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
+import { getMe } from "@/lib/api";
 import { toast } from "sonner";
+import { useMounted } from "@/hooks/use-mounted";
 
-const defaultDays = [1, 3, 5, 7, 14, 21, 30];
-const allDays = [1, 2, 3, 5, 7, 10, 14, 21, 30, 45, 60, 90];
-
-const surgeryTypes = [
-  "Knee Replacement",
-  "Hip Replacement",
-  "Appendectomy",
-  "Cardiac Bypass",
-  "ACL Reconstruction",
-  "Gallbladder Removal",
-  "Hernia Repair",
-  "C-Section",
-];
-
-const surgeryColors = [
-  { bg: "rgba(59,130,246,0.1)", border: "rgba(59,130,246,0.2)", text: "#60A5FA" },
-  { bg: "rgba(34,197,94,0.1)", border: "rgba(34,197,94,0.2)", text: "#4ADE80" },
-  { bg: "rgba(139,92,246,0.1)", border: "rgba(139,92,246,0.2)", text: "#A78BFA" },
-  { bg: "rgba(239,68,68,0.1)", border: "rgba(239,68,68,0.2)", text: "#F87171" },
-  { bg: "rgba(245,158,11,0.1)", border: "rgba(245,158,11,0.2)", text: "#FBBF24" },
-  { bg: "rgba(236,72,153,0.1)", border: "rgba(236,72,153,0.2)", text: "#F472B6" },
-  { bg: "rgba(6,182,212,0.1)", border: "rgba(6,182,212,0.2)", text: "#22D3EE" },
-  { bg: "rgba(168,85,247,0.1)", border: "rgba(168,85,247,0.2)", text: "#C084FC" },
+const settingsSections = [
+  { id: "profile", label: "Profile", icon: User },
+  { id: "checkins", label: "Check-in Schedule", icon: Calendar },
+  { id: "escalation", label: "Escalation Rules", icon: Shield },
+  { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "appearance", label: "Appearance", icon: Palette },
 ];
 
 export default function SettingsPage() {
-  const router = useRouter();
-  const [selectedDays, setSelectedDays] = useState<number[]>(defaultDays);
-  const [checkinTime, setCheckinTime] = useState("10:00");
-  const [escalationThreshold, setEscalationThreshold] = useState(60);
+  return (
+    <AppShell>
+      <SettingsContent />
+    </AppShell>
+  );
+}
+
+function SettingsContent() {
+  const { theme, setTheme } = useTheme();
+  const mounted = useMounted();
+  const [activeSection, setActiveSection] = useState("profile");
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Profile form
+  const [profile, setProfile] = useState({
+    name: "", email: "", phone: "", specialization: "", hospital: "",
+    currentPassword: "", newPassword: "",
+  });
+
+  // Check-in schedule
+  const [checkinDays, setCheckinDays] = useState([1, 3, 5, 7, 14, 21, 30]);
+  const [checkinTime, setCheckinTime] = useState("09:00");
+
+  // Escalation thresholds
+  const [thresholds, setThresholds] = useState({
+    yellowPain: 5,
+    redPain: 7,
+    criticalPain: 9,
+  });
+
+  // Notifications
+  const [notifications, setNotifications] = useState({
+    dashboard: true,
+    sms: false,
+    email: true,
+    criticalOnly: false,
+  });
 
   useEffect(() => {
-    if (!localStorage.getItem("healhub_token")) {
-      router.push("/login");
-    }
+    const fetchUser = async () => {
+      try {
+        const res = await getMe();
+        setProfile({
+          name: res.data.name || "",
+          email: res.data.email || "",
+          phone: res.data.phone || "",
+          specialization: res.data.specialization || "",
+          hospital: res.data.hospital || "",
+          currentPassword: "",
+          newPassword: "",
+        });
+      } catch {
+        // silently fail
+      }
+    };
+    fetchUser();
   }, []);
 
-  const toggleDay = (day: number) => {
-    setSelectedDays((prev) =>
-      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort((a, b) => a - b)
-    );
+  const handleSave = async () => {
+    setIsSaving(true);
+    await new Promise((r) => setTimeout(r, 800));
+    toast.success("Settings saved");
+    setIsSaving(false);
   };
 
-  const handleSave = () => {
-    toast.success("Settings saved!");
-  };
-
-  /* Compute slider fill percentage for the gradient track */
-  const sliderPercent = ((escalationThreshold - 20) / (90 - 20)) * 100;
-
-  /* Threshold label color */
-  const thresholdColor =
-    escalationThreshold < 40
-      ? "#EF4444"
-      : escalationThreshold < 65
-      ? "#F59E0B"
-      : "#22C55E";
+  const days = ["Day 1", "Day 3", "Day 5", "Day 7", "Day 14", "Day 21", "Day 30", "Day 45", "Day 60", "Day 90"];
+  const dayValues = [1, 3, 5, 7, 14, 21, 30, 45, 60, 90];
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="space-y-8 max-w-3xl"
-    >
-      {/* Page Header */}
-      <div className="flex items-center gap-4">
-        <div className="p-3 rounded-2xl bg-gradient-to-br from-blue-500/15 to-cyan-500/10 border border-blue-500/20">
-          <Settings2 className="w-6 h-6 text-blue-400" />
-        </div>
-        <div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-white via-white to-slate-400 bg-clip-text text-transparent">
-            Settings
-          </h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Configure check-in schedules and alert thresholds
-          </p>
+    <PageWrapper>
+      <div className="max-w-4xl mx-auto">
+        <h2 className="text-lg font-semibold mb-6">Settings</h2>
+
+        <div className="flex flex-col md:flex-row gap-6">
+          {/* Section nav */}
+          <nav className="md:w-48 shrink-0">
+            <div className="flex md:flex-col gap-1 overflow-x-auto no-scrollbar">
+              {settingsSections.map((section) => (
+                <motion.button
+                  key={section.id}
+                  whileHover={{ x: 3 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => setActiveSection(section.id)}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+                    activeSection === section.id
+                      ? "bg-primary/8 text-primary nav-glow"
+                      : "text-muted-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  <section.icon className="w-4 h-4" />
+                  {section.label}
+                </motion.button>
+              ))}
+            </div>
+          </nav>
+
+          {/* Content */}
+          <div className="flex-1 bg-card border border-border rounded-xl p-6 card-glow">
+            {/* Profile */}
+            {activeSection === "profile" && (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: [0.25, 0.46, 0.45, 0.94] }} className="space-y-5">
+                <h3 className="text-base font-semibold">Profile</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Full Name</Label>
+                    <Input value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Email</Label>
+                    <Input value={profile.email} onChange={(e) => setProfile({ ...profile, email: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Phone</Label>
+                    <Input value={profile.phone} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Specialization</Label>
+                    <Input value={profile.specialization} onChange={(e) => setProfile({ ...profile, specialization: e.target.value })} />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>Hospital</Label>
+                    <Input value={profile.hospital} onChange={(e) => setProfile({ ...profile, hospital: e.target.value })} />
+                  </div>
+                </div>
+                <Separator />
+                <h4 className="text-sm font-semibold">Change Password</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Current Password</Label>
+                    <Input type="password" value={profile.currentPassword} onChange={(e) => setProfile({ ...profile, currentPassword: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>New Password</Label>
+                    <Input type="password" value={profile.newPassword} onChange={(e) => setProfile({ ...profile, newPassword: e.target.value })} />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Check-in Schedule */}
+            {activeSection === "checkins" && (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: [0.25, 0.46, 0.45, 0.94] }} className="space-y-5">
+                <h3 className="text-base font-semibold">Check-in Schedule</h3>
+                <p className="text-sm text-muted-foreground">Select which days after surgery patients should receive automated check-ins.</p>
+                <div className="flex flex-wrap gap-2">
+                  {dayValues.map((day, i) => {
+                    const active = checkinDays.includes(day);
+                    return (
+                      <motion.button
+                        key={day}
+                        whileTap={{ scale: 0.93 }}
+                        onClick={() => setCheckinDays(active ? checkinDays.filter((d) => d !== day) : [...checkinDays, day].sort((a, b) => a - b))}
+                        className={`px-3 py-2 rounded-lg text-sm font-medium filter-pill ${
+                          active ? "bg-primary text-primary-foreground filter-pill-active" : "bg-muted text-muted-foreground hover:bg-muted/80"
+                        }`}
+                      >
+                        {days[i]}
+                      </motion.button>
+                    );
+                  })}
+                </div>
+                <div className="space-y-2 max-w-xs">
+                  <Label>Check-in Time</Label>
+                  <Input type="time" value={checkinTime} onChange={(e) => setCheckinTime(e.target.value)} />
+                </div>
+              </motion.div>
+            )}
+
+            {/* Escalation Rules */}
+            {activeSection === "escalation" && (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: [0.25, 0.46, 0.45, 0.94] }} className="space-y-5">
+                <h3 className="text-base font-semibold">Escalation Rules</h3>
+                <p className="text-sm text-muted-foreground">Set pain thresholds for automatic alert escalation.</p>
+                <div className="space-y-6 max-w-md">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-amber-500" /> Yellow Alert
+                      </Label>
+                      <span className="text-sm font-semibold">Pain ≥ {thresholds.yellowPain}</span>
+                    </div>
+                    <input
+                      type="range" min="1" max="10" value={thresholds.yellowPain}
+                      onChange={(e) => setThresholds({ ...thresholds, yellowPain: parseInt(e.target.value) })}
+                      className="w-full accent-amber-500"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-red-500" /> Red Alert
+                      </Label>
+                      <span className="text-sm font-semibold">Pain ≥ {thresholds.redPain}</span>
+                    </div>
+                    <input
+                      type="range" min="1" max="10" value={thresholds.redPain}
+                      onChange={(e) => setThresholds({ ...thresholds, redPain: parseInt(e.target.value) })}
+                      className="w-full accent-red-500"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-red-700" /> Critical Alert
+                      </Label>
+                      <span className="text-sm font-semibold">Pain ≥ {thresholds.criticalPain}</span>
+                    </div>
+                    <input
+                      type="range" min="1" max="10" value={thresholds.criticalPain}
+                      onChange={(e) => setThresholds({ ...thresholds, criticalPain: parseInt(e.target.value) })}
+                      className="w-full accent-red-700"
+                    />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Notifications */}
+            {activeSection === "notifications" && (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: [0.25, 0.46, 0.45, 0.94] }} className="space-y-5">
+                <h3 className="text-base font-semibold">Notifications</h3>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Dashboard Alerts</p>
+                      <p className="text-xs text-muted-foreground">Show alerts on the dashboard</p>
+                    </div>
+                    <Switch checked={notifications.dashboard} onCheckedChange={(v) => setNotifications({ ...notifications, dashboard: v })} />
+                  </div>
+                  <Separator />
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Email Notifications</p>
+                      <p className="text-xs text-muted-foreground">Receive alerts via email</p>
+                    </div>
+                    <Switch checked={notifications.email} onCheckedChange={(v) => setNotifications({ ...notifications, email: v })} />
+                  </div>
+                  <Separator />
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">SMS Notifications</p>
+                      <p className="text-xs text-muted-foreground">Receive alerts via SMS</p>
+                    </div>
+                    <Switch checked={notifications.sms} onCheckedChange={(v) => setNotifications({ ...notifications, sms: v })} />
+                  </div>
+                  <Separator />
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Critical Alerts Only</p>
+                      <p className="text-xs text-muted-foreground">Only notify for critical-level alerts</p>
+                    </div>
+                    <Switch checked={notifications.criticalOnly} onCheckedChange={(v) => setNotifications({ ...notifications, criticalOnly: v })} />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Appearance */}
+            {activeSection === "appearance" && mounted && (
+              <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: [0.25, 0.46, 0.45, 0.94] }} className="space-y-5">
+                <h3 className="text-base font-semibold">Appearance</h3>
+                <p className="text-sm text-muted-foreground">Choose your preferred theme.</p>
+                <div className="grid grid-cols-3 gap-3 max-w-sm">
+                  {[
+                    { value: "light", label: "Light", icon: Sun },
+                    { value: "dark", label: "Dark", icon: Moon },
+                    { value: "system", label: "System", icon: Monitor },
+                  ].map((t) => (
+                    <motion.button
+                      key={t.value}
+                      whileHover={{ y: -3 }}
+                      whileTap={{ scale: 0.97 }}
+                      onClick={() => setTheme(t.value)}
+                      className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-colors ${
+                        theme === t.value
+                          ? "border-primary bg-primary/5 card-glow"
+                          : "border-border hover:border-muted-foreground/30"
+                      }`}
+                    >
+                      <motion.div
+                        key={theme === t.value ? "active" : "inactive"}
+                        initial={{ rotate: -45, scale: 0.8 }}
+                        animate={{ rotate: 0, scale: 1 }}
+                        transition={{ duration: 0.3 }}
+                      >
+                        <t.icon className={`w-5 h-5 ${theme === t.value ? "text-primary" : "text-muted-foreground"}`} />
+                      </motion.div>
+                      <span className={`text-sm font-medium ${theme === t.value ? "text-primary" : ""}`}>{t.label}</span>
+                    </motion.button>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+
+            {/* Save button */}
+            <div className="mt-8 pt-4 border-t border-border flex justify-end">
+              <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
+                <Button onClick={handleSave} disabled={isSaving} className="btn-premium text-white">
+                  {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
+                  Save Changes
+                </Button>
+              </motion.div>
+            </div>
+          </div>
         </div>
       </div>
-
-      {/* Check-in Schedule */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
-      >
-        <div
-          className="rounded-2xl p-6"
-          style={{
-            background: "rgba(255,255,255,0.03)",
-            backdropFilter: "blur(12px)",
-            border: "1px solid rgba(255,255,255,0.06)",
-          }}
-        >
-          <div className="flex items-center gap-3 mb-5">
-            <div className="p-2 rounded-xl bg-emerald-500/15">
-              <Calendar className="w-4 h-4 text-emerald-400" />
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-white">Check-in Schedule</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Select which days post-surgery to send check-in messages
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2.5 mb-6">
-            {allDays.map((day) => {
-              const isSelected = selectedDays.includes(day);
-              return (
-                <motion.button
-                  key={day}
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => toggleDay(day)}
-                  className="relative px-4 py-2 rounded-xl text-sm font-medium transition-all duration-300"
-                  style={
-                    isSelected
-                      ? {
-                          background: "linear-gradient(135deg, #3B82F6 0%, #06B6D4 100%)",
-                          color: "#FFFFFF",
-                          boxShadow: "0 4px 15px rgba(59,130,246,0.3), 0 0 0 1px rgba(59,130,246,0.2)",
-                        }
-                      : {
-                          background: "rgba(255,255,255,0.03)",
-                          border: "1px solid rgba(255,255,255,0.08)",
-                          color: "#94A3B8",
-                        }
-                  }
-                >
-                  Day {day}
-                </motion.button>
-              );
-            })}
-          </div>
-
-          <div
-            className="flex items-center gap-4 p-4 rounded-xl"
-            style={{
-              background: "rgba(255,255,255,0.02)",
-              border: "1px solid rgba(255,255,255,0.05)",
-            }}
-          >
-            <div className="p-2 rounded-lg bg-blue-500/10">
-              <Clock className="w-4 h-4 text-blue-400" />
-            </div>
-            <label className="text-sm text-slate-400 font-medium">Daily Check-in Time</label>
-            <Input
-              type="time"
-              value={checkinTime}
-              onChange={(e) => setCheckinTime(e.target.value)}
-              className="w-36 bg-white/[0.03] border-white/10 rounded-xl text-white focus:border-blue-500/50 focus:ring-blue-500/20"
-            />
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Escalation Thresholds */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-      >
-        <div
-          className="rounded-2xl p-6"
-          style={{
-            background: "rgba(255,255,255,0.03)",
-            backdropFilter: "blur(12px)",
-            border: "1px solid rgba(255,255,255,0.06)",
-          }}
-        >
-          <div className="flex items-center gap-3 mb-5">
-            <div className="p-2 rounded-xl bg-amber-500/15">
-              <Gauge className="w-4 h-4 text-amber-400" />
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-white">Escalation Settings</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Configure risk thresholds for automatic doctor alerts
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-5">
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <label className="text-sm text-slate-400">Risk score threshold for doctor alert</label>
-                <div
-                  className="px-3 py-1 rounded-lg text-sm font-bold"
-                  style={{
-                    background: `${thresholdColor}15`,
-                    color: thresholdColor,
-                    border: `1px solid ${thresholdColor}30`,
-                  }}
-                >
-                  {escalationThreshold}
-                </div>
-              </div>
-
-              {/* Custom Slider */}
-              <div className="relative">
-                <div className="relative h-2 rounded-full bg-white/[0.06] overflow-hidden">
-                  <div
-                    className="absolute h-full rounded-full transition-all duration-150"
-                    style={{
-                      width: `${sliderPercent}%`,
-                      background: "linear-gradient(90deg, #EF4444 0%, #F59E0B 50%, #22C55E 100%)",
-                    }}
-                  />
-                </div>
-                <input
-                  type="range"
-                  min={20}
-                  max={90}
-                  value={escalationThreshold}
-                  onChange={(e) => setEscalationThreshold(Number(e.target.value))}
-                  className="absolute inset-0 w-full h-2 opacity-0 cursor-pointer"
-                  style={{ margin: 0 }}
-                />
-                {/* Thumb indicator */}
-                <div
-                  className="absolute top-1/2 -translate-y-1/2 w-5 h-5 rounded-full border-2 pointer-events-none transition-all duration-150"
-                  style={{
-                    left: `calc(${sliderPercent}% - 10px)`,
-                    background: "#0F172A",
-                    borderColor: thresholdColor,
-                    boxShadow: `0 0 10px ${thresholdColor}40`,
-                  }}
-                />
-              </div>
-
-              <div className="flex justify-between text-xs mt-3">
-                <span className="text-red-400/70 font-medium">Sensitive (20)</span>
-                <span className="text-amber-400/70 font-medium">Moderate (55)</span>
-                <span className="text-emerald-400/70 font-medium">Conservative (90)</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Surgery Types */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3 }}
-      >
-        <div
-          className="rounded-2xl p-6"
-          style={{
-            background: "rgba(255,255,255,0.03)",
-            backdropFilter: "blur(12px)",
-            border: "1px solid rgba(255,255,255,0.06)",
-          }}
-        >
-          <div className="flex items-center gap-3 mb-5">
-            <div className="p-2 rounded-xl bg-purple-500/15">
-              <Stethoscope className="w-4 h-4 text-purple-400" />
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-white">Surgery Types</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Supported surgical procedures in your practice
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2.5">
-            {surgeryTypes.map((type, i) => {
-              const colorSet = surgeryColors[i % surgeryColors.length];
-              return (
-                <motion.div
-                  key={type}
-                  whileHover={{ scale: 1.05, y: -2 }}
-                  className="px-4 py-2 rounded-xl text-sm font-medium cursor-default transition-all duration-200"
-                  style={{
-                    background: colorSet.bg,
-                    border: `1px solid ${colorSet.border}`,
-                    color: colorSet.text,
-                  }}
-                >
-                  {type}
-                </motion.div>
-              );
-            })}
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Save Button */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.4 }}
-      >
-        <Button
-          onClick={handleSave}
-          className="rounded-xl px-8 py-6 text-sm font-semibold text-white border-0 transition-all duration-300 hover:shadow-lg hover:shadow-blue-500/20 hover:translate-y-[-2px]"
-          style={{
-            background: "linear-gradient(135deg, #3B82F6 0%, #06B6D4 100%)",
-          }}
-        >
-          <Sparkles className="w-4 h-4 mr-2" />
-          Save Settings
-        </Button>
-      </motion.div>
-    </motion.div>
+    </PageWrapper>
   );
 }

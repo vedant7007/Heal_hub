@@ -1,330 +1,254 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Plus, Search, ArrowRight, Activity, Users } from "lucide-react";
+import Link from "next/link";
+import { AppShell } from "@/components/layout/AppShell";
+import { PageWrapper, staggerContainer } from "@/components/shared/PageWrapper";
+import { DashboardSkeleton } from "@/components/shared/Skeleton";
+import { StatsOverview } from "@/components/dashboard/StatsOverview";
+import { PatientListItem } from "@/components/dashboard/PatientCard";
+import { RecentActivity, type ActivityItem } from "@/components/dashboard/RecentActivity";
+import { AlertBanner } from "@/components/dashboard/AlertBanner";
+import { AddPatientDialog } from "@/components/dashboard/AddPatientDialog";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Search, Calendar, Sun, Moon, Sunrise, Users, Plus } from "lucide-react";
+import { BentoCard } from "@/components/ui/BentoCard";
+import { MagneticButton } from "@/components/ui/MagneticButton";
 import { getPatients, getOverview, getActiveAlerts } from "@/lib/api";
-import { Patient, OverviewStats, Alert } from "@/types";
-import StatsOverview from "@/components/dashboard/StatsOverview";
-import PatientCard from "@/components/dashboard/PatientCard";
-import RecentActivity from "@/components/dashboard/RecentActivity";
-import AlertBanner from "@/components/dashboard/AlertBanner";
-import AddPatientDialog from "@/components/dashboard/AddPatientDialog";
-import { motion } from "framer-motion";
-import { format } from "date-fns";
+import { getSocket } from "@/lib/socket";
+import { useUser } from "@/lib/user-context";
+import type { Patient, Alert, OverviewStats } from "@/types";
 
-const statusFilters = ["all", "green", "yellow", "red", "critical"];
+const statusFilters = [
+  { label: "All", value: "all" },
+  { label: "Recovering", value: "green" },
+  { label: "Attention", value: "yellow" },
+  { label: "Critical", value: "red" },
+];
 
-const statusFilterColors: Record<string, string> = {
-  all: "#3B82F6",
-  green: "#22C55E",
-  yellow: "#EAB308",
-  red: "#EF4444",
-  critical: "#EF4444",
-};
-
-function getGreeting(): { text: string; icon: typeof Sun } {
-  const hour = new Date().getHours();
-  if (hour >= 5 && hour < 12) return { text: "Good morning", icon: Sunrise };
-  if (hour >= 12 && hour < 18) return { text: "Good afternoon", icon: Sun };
-  return { text: "Good evening", icon: Moon };
+export default function DashboardPage() {
+  return (
+    <AppShell>
+      <DashboardContent />
+    </AppShell>
+  );
 }
 
-export default function Dashboard() {
-  const router = useRouter();
+function DashboardContent() {
+  const { user, role } = useUser();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [loading, setLoading] = useState(true);
-  const [addOpen, setAddOpen] = useState(false);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
 
-  useEffect(() => {
-    const token = localStorage.getItem("healhub_token");
-    if (!token) {
-      router.push("/login");
-      return;
-    }
-    loadData();
-  }, []);
+  // Build user greeting
+  const firstName = user?.name?.replace(/^Dr\.?\s*/i, "").split(" ")[0] || (role === "nurse" ? "Nurse" : "Doctor");
+  const rolePrefix = role === "doctor" ? "Dr. " : "";
 
-  useEffect(() => {
-    loadPatients();
-  }, [search, statusFilter]);
-
-  const loadData = async () => {
+  const fetchData = useCallback(async () => {
     try {
-      const [pRes, sRes, aRes] = await Promise.all([
+      const [patientsRes, overviewRes, alertsRes] = await Promise.all([
         getPatients(),
         getOverview(),
         getActiveAlerts(),
       ]);
-      setPatients(pRes.data);
-      setStats(sRes.data);
-      setAlerts(aRes.data);
+      setPatients(patientsRes.data || []);
+      setStats(overviewRes.data || {
+        total_patients: 0, active_alerts: 0, avg_recovery_score: 0, checkins_today: 0,
+        status_distribution: {},
+      });
+      const alertData = alertsRes.data || [];
+      setAlerts(alertData);
+
+      const acts: ActivityItem[] = alertData.slice(0, 10).map((a: Alert, i: number) => ({
+        id: a.id || String(i),
+        type: a.level >= 3 ? "alert" as const : "status_change" as const,
+        text: `${a.patient_name}: ${a.title}`,
+        timestamp: a.created_at,
+        patientName: a.patient_name,
+      }));
+      setActivities(acts);
     } catch {
-      router.push("/login");
+      // Intentionally suppressed
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
-  };
+  }, []);
 
-  const loadPatients = async () => {
-    try {
-      const params: Record<string, string> = {};
-      if (search) params.search = search;
-      if (statusFilter !== "all") params.status = statusFilter;
-      const res = await getPatients(params);
-      setPatients(res.data);
-    } catch {}
-  };
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
-  // Compute status counts from patient data
-  const statusCounts = useMemo(() => {
-    const counts: Record<string, number> = { green: 0, yellow: 0, red: 0, critical: 0 };
-    patients.forEach((p) => {
-      if (counts[p.current_status] !== undefined) {
-        counts[p.current_status]++;
-      }
-    });
-    return counts;
-  }, [patients]);
+  useEffect(() => {
+    const socket = getSocket();
+    socket.on("new_checkin", () => fetchData());
+    socket.on("new_alert", () => fetchData());
+    return () => {
+      socket.off("new_checkin");
+      socket.off("new_alert");
+    };
+  }, [fetchData]);
 
-  const greeting = getGreeting();
-  const GreetingIcon = greeting.icon;
+  const filteredPatients = patients
+    .filter((p) => statusFilter === "all" || p.current_status === statusFilter)
+    .filter((p) => !search || p.name.toLowerCase().includes(search.toLowerCase()));
 
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        {/* Welcome skeleton */}
-        <div className="h-20 bg-white/[0.03] rounded-2xl animate-pulse" />
-
-        {/* Stats skeleton */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => (
-            <div
-              key={i}
-              className="h-32 bg-white/[0.03] border border-white/[0.05] rounded-2xl animate-pulse"
-            />
-          ))}
-        </div>
-
-        {/* Content skeleton */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-3">
-            <div className="h-12 bg-white/[0.03] rounded-2xl animate-pulse" />
-            {[...Array(5)].map((_, i) => (
-              <div
-                key={i}
-                className="h-24 bg-white/[0.03] border border-white/[0.05] rounded-2xl animate-pulse"
-              />
-            ))}
-          </div>
-          <div className="h-[500px] bg-white/[0.03] border border-white/[0.05] rounded-2xl animate-pulse" />
-        </div>
-      </div>
-    );
-  }
+  if (isLoading) return <DashboardSkeleton />;
 
   return (
-    <div className="space-y-6">
-      {/* Welcome Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="relative overflow-hidden"
-      >
-        <div className="relative bg-white/[0.03] backdrop-blur-xl border border-white/[0.06] rounded-2xl px-6 py-5">
-          {/* Ambient gradient */}
-          <div className="absolute top-0 right-0 w-80 h-40 bg-[#3B82F6]/[0.04] rounded-full blur-3xl" />
-          <div className="absolute bottom-0 left-20 w-60 h-30 bg-[#8B5CF6]/[0.03] rounded-full blur-3xl" />
-
-          <div className="relative flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 rounded-xl bg-[#3B82F6]/10 border border-[#3B82F6]/20 flex items-center justify-center">
-                <GreetingIcon className="w-5 h-5 text-[#3B82F6]" />
-              </div>
-              <div>
-                <h1 className="text-lg font-bold text-white tracking-tight">
-                  {greeting.text}, Dr. Sharma
-                </h1>
-                <p className="text-sm text-[#64748B] flex items-center gap-1.5 mt-0.5">
-                  <Calendar className="w-3.5 h-3.5" />
-                  {format(new Date(), "EEEE, MMMM d, yyyy")}
-                </p>
-              </div>
-            </div>
-
-            {/* Quick stats + Add Patient */}
-            <div className="flex items-center gap-2">
-              <div className="hidden md:flex items-center gap-2">
-                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06]">
-                  <Users className="w-3.5 h-3.5 text-[#3B82F6]" />
-                  <span className="text-xs font-medium text-[#94A3B8]">
-                    {stats?.total_patients || 0} patients
-                  </span>
-                </div>
-                {(stats?.active_alerts || 0) > 0 && (
-                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#EF4444]/[0.06] border border-[#EF4444]/15">
-                    <div className="w-2 h-2 rounded-full bg-[#EF4444] animate-pulse" />
-                    <span className="text-xs font-medium text-[#EF4444]">
-                      {stats?.active_alerts} alert{(stats?.active_alerts || 0) > 1 ? "s" : ""}
-                    </span>
-                  </div>
-                )}
-              </div>
-              <Button
-                onClick={() => setAddOpen(true)}
-                className="h-9 px-4 rounded-xl text-xs font-semibold text-white border-0 transition-all duration-300 hover:shadow-lg hover:shadow-blue-500/25 hover:translate-y-[-1px]"
-                style={{
-                  background: "linear-gradient(135deg, #3B82F6 0%, #06B6D4 100%)",
-                }}
-              >
-                <Plus className="w-4 h-4" />
-                <span className="hidden sm:inline">Add Patient</span>
-              </Button>
-            </div>
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Alert Banner - show prominently after welcome */}
-      <AlertBanner alerts={alerts} />
-
-      {/* Stats Overview */}
-      <StatsOverview stats={stats} />
-
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Patient List Section */}
+    <PageWrapper>
+      <div className="space-y-6 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12">
+        {/* Animated Headline */}
         <motion.div
-          className="lg:col-span-2 space-y-4"
-          initial={{ opacity: 0, y: 12 }}
+          initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2, duration: 0.5 }}
+          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+          className="mb-8"
         >
-          {/* Search and Filters in glass container */}
-          <div className="bg-white/[0.03] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-4">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-              {/* Search input */}
-              <div className="relative flex-1 w-full">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#475569]" />
-                <Input
-                  placeholder="Search patients by name..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="pl-10 bg-white/[0.04] border-white/[0.08] text-sm rounded-xl placeholder:text-[#475569] focus:border-[#3B82F6]/30 focus:ring-[#3B82F6]/10 transition-all duration-300"
-                />
-              </div>
+          <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-foreground">
+            Welcome back, <span className="text-primary bg-clip-text">{rolePrefix}{firstName}</span>
+          </h1>
+          <p className="mt-2 text-lg text-muted-foreground">
+            {role === "nurse"
+              ? "Here\u2019s your patient care overview for today."
+              : "Here\u2019s what\u2019s happening with your patients today."}
+          </p>
+        </motion.div>
 
-              {/* Filter buttons */}
-              <div className="flex gap-1.5 flex-wrap">
-                {statusFilters.map((f) => {
-                  const isActive = statusFilter === f;
-                  const filterColor = statusFilterColors[f];
+        {/* Stats Row */}
+        {stats && <StatsOverview stats={stats} />}
 
-                  return (
-                    <motion.button
-                      key={f}
-                      onClick={() => setStatusFilter(f)}
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200"
-                      style={{
-                        backgroundColor: isActive ? `${filterColor}18` : "rgba(255,255,255,0.03)",
-                        color: isActive ? filterColor : "#64748B",
-                        border: `1px solid ${isActive ? `${filterColor}30` : "rgba(255,255,255,0.06)"}`,
-                        boxShadow: isActive ? `0 0 12px ${filterColor}10` : "none",
-                      }}
-                    >
-                      {f.charAt(0).toUpperCase() + f.slice(1)}
-                    </motion.button>
-                  );
-                })}
-              </div>
-            </div>
+        {/* Bento Grid Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-8">
 
-            {/* Status count pills */}
-            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-white/[0.04]">
-              <span className="text-[10px] font-medium text-[#475569] uppercase tracking-wider mr-1">
-                Status:
-              </span>
-              {[
-                { key: "green", label: "Green", color: "#22C55E" },
-                { key: "yellow", label: "Yellow", color: "#EAB308" },
-                { key: "red", label: "Red", color: "#EF4444" },
-                { key: "critical", label: "Critical", color: "#EF4444" },
-              ].map((s) => (
-                <div
-                  key={s.key}
-                  className="flex items-center gap-1.5 px-2 py-1 rounded-md"
-                  style={{
-                    backgroundColor: `${s.color}08`,
-                    border: `1px solid ${s.color}15`,
-                  }}
-                >
-                  <div
-                    className="w-1.5 h-1.5 rounded-full"
-                    style={{ backgroundColor: s.color }}
-                  />
-                  <span
-                    className="text-[10px] font-semibold"
-                    style={{ color: s.color }}
-                  >
-                    {statusCounts[s.key] || 0}
-                  </span>
-                  <span className="text-[10px] text-[#64748B]">{s.label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Patient cards */}
-          <div className="space-y-2.5">
-            {patients.length === 0 ? (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="bg-white/[0.03] backdrop-blur-xl border border-white/[0.06] rounded-2xl py-16"
-              >
-                <div className="flex flex-col items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center">
-                    <Users className="w-5 h-5 text-[#475569]" />
+          {/* Main Patient List Bento */}
+          <motion.div
+            variants={staggerContainer}
+            initial="hidden"
+            animate="show"
+            className="lg:col-span-8 flex flex-col h-full min-h-[500px]"
+          >
+            <BentoCard className="flex flex-col p-0 overflow-hidden glowColor='rgba(56, 189, 248, 0.15)'">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-6 pb-4 border-b border-border/50 bg-background/50">
+                <div className="flex items-center gap-3 mb-4 sm:mb-0">
+                  <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                    <Users className="w-5 h-5" />
                   </div>
-                  <p className="text-sm text-[#475569]">No patients found</p>
-                  {search && (
-                    <p className="text-xs text-[#334155]">
-                      Try adjusting your search or filters
-                    </p>
+                  <h2 className="text-xl font-semibold tracking-tight">Active Patients</h2>
+                </div>
+
+                <div className="flex items-center gap-3 w-full sm:w-auto">
+                  <Link href="/patients" className="text-sm text-primary hover:underline font-medium flex items-center gap-1 transition-colors">
+                    View All <ArrowRight className="w-4 h-4 ml-1" />
+                  </Link>
+                  {role === "doctor" && (
+                    <MagneticButton size="sm" onClick={() => setAddDialogOpen(true)} className="btn-premium shadow-lg shadow-primary/25">
+                      <Plus className="w-4 h-4 mr-1.5" /> Add Patient
+                    </MagneticButton>
                   )}
                 </div>
-              </motion.div>
-            ) : (
-              patients.map((p, i) => <PatientCard key={p.id} patient={p} index={i} />)
-            )}
-          </div>
-        </motion.div>
+              </div>
 
-        {/* Activity Feed Section */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.35, duration: 0.5 }}
-        >
-          <RecentActivity />
-        </motion.div>
+              {/* Filters & Search */}
+              <div className="px-6 py-4 space-y-4 bg-background/20">
+                <div className="relative group max-w-md">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground transition-colors group-focus-within:text-primary" />
+                  <Input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search by name or surgery..."
+                    className="pl-9 h-10 bg-background/50 border-border/50 focus:bg-background transition-all"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {statusFilters.map((f) => (
+                    <motion.button
+                      key={f.value}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => setStatusFilter(f.value)}
+                      className={`text-sm px-4 py-1.5 rounded-full font-medium filter-pill transition-all duration-300 ${statusFilter === f.value
+                          ? "bg-primary text-primary-foreground shadow-md shadow-primary/20 filter-pill-active"
+                          : "bg-secondary text-secondary-foreground hover:bg-secondary/80 border border-transparent hover:border-border"
+                        }`}
+                    >
+                      {f.label}
+                    </motion.button>
+                  ))}
+                </div>
+              </div>
+
+              {/* List */}
+              <div className="flex-1 overflow-y-auto p-2">
+                <AnimatePresence mode="popLayout">
+                  {filteredPatients.length === 0 ? (
+                    <motion.div
+                      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                      className="py-16 text-center text-muted-foreground flex flex-col items-center justify-center"
+                    >
+                      <div className="p-4 rounded-full bg-secondary/50 mb-3">
+                        <Search className="w-6 h-6 outline-none" />
+                      </div>
+                      <p>No patients match your filters.</p>
+                    </motion.div>
+                  ) : (
+                    filteredPatients.slice(0, 8).map((p, i) => (
+                      <motion.div
+                        key={p.id}
+                        layout
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        transition={{ duration: 0.3, delay: i * 0.05 }}
+                        className="px-4"
+                      >
+                        <PatientListItem patient={p} index={i} />
+                      </motion.div>
+                    ))
+                  )}
+                </AnimatePresence>
+              </div>
+            </BentoCard>
+          </motion.div>
+
+          {/* Activity Feed Bento */}
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.3, duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}
+            className="lg:col-span-4 flex flex-col h-full min-h-[400px]"
+          >
+            <BentoCard className="flex flex-col p-0 overflow-hidden" glowColor="rgba(139, 92, 246, 0.15)">
+              <div className="flex items-center justify-between p-6 pb-4 border-b border-border/50 bg-background/50">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-purple-500/10 text-purple-500">
+                    <Activity className="w-5 h-5" />
+                  </div>
+                  <h2 className="text-xl font-semibold tracking-tight">Timeline</h2>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6 pt-4">
+                <RecentActivity activities={activities} />
+              </div>
+            </BentoCard>
+          </motion.div>
+        </div>
+
+        {/* Global Critical Alerts */}
+        <div className="pt-4">
+          <AlertBanner alerts={alerts} />
+        </div>
       </div>
 
-      {/* Add Patient Dialog */}
       <AddPatientDialog
-        open={addOpen}
-        onOpenChange={setAddOpen}
-        onSuccess={loadData}
+        open={addDialogOpen}
+        onOpenChange={setAddDialogOpen}
+        onSuccess={fetchData}
       />
-    </div>
+    </PageWrapper>
   );
 }

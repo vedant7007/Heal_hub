@@ -1,44 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { createPatient } from "@/lib/api";
 import { toast } from "sonner";
-import { UserPlus, Loader2, Phone, User, Heart } from "lucide-react";
-
-const surgeryTypes = [
-  "Knee Replacement",
-  "Appendectomy",
-  "Cardiac Bypass",
-  "Hip Replacement",
-  "Cataract Surgery",
-  "Hernia Repair",
-];
-
-const languages = [
-  { value: "en", label: "English" },
-  { value: "hi", label: "Hindi" },
-  { value: "te", label: "Telugu" },
-];
-
-const genders = ["Male", "Female", "Other"];
-const relations = ["Son", "Daughter", "Spouse", "Parent"];
+import { Loader2, Plus, X } from "lucide-react";
 
 interface AddPatientDialogProps {
   open: boolean;
@@ -46,384 +17,242 @@ interface AddPatientDialogProps {
   onSuccess: () => void;
 }
 
-export default function AddPatientDialog({
-  open,
-  onOpenChange,
-  onSuccess,
-}: AddPatientDialogProps) {
-  const [loading, setLoading] = useState(false);
+const surgeryTypes = [
+  "Knee Replacement",
+  "Hip Replacement",
+  "Cardiac Bypass",
+  "Spinal Surgery",
+  "ACL Reconstruction",
+  "Appendectomy",
+  "Cataract Surgery",
+  "Hernia Repair",
+  "Other",
+];
 
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [age, setAge] = useState("");
-  const [gender, setGender] = useState("Male");
-  const [language, setLanguage] = useState("en");
-  const [surgeryType, setSurgeryType] = useState("");
-  const [surgeryDate, setSurgeryDate] = useState("");
-  const [hospital, setHospital] = useState("KLH Hospital");
-  const [familyName, setFamilyName] = useState("");
-  const [familyPhone, setFamilyPhone] = useState("");
-  const [familyRelation, setFamilyRelation] = useState("");
+export function AddPatientDialog({ open, onOpenChange, onSuccess }: AddPatientDialogProps) {
+  const [isLoading, setIsLoading] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    phone: "",
+    age: "",
+    gender: "male",
+    language_preference: "english",
+    surgery_type: "",
+    surgery_date: "",
+    hospital: "",
+    additional_notes: "",
+    medicines: [{ name: "", dosage: "", frequency: "twice daily" }],
+    family_contacts: [{ name: "", phone: "", relation: "" }],
+  });
 
-  const resetForm = () => {
-    setName("");
-    setPhone("");
-    setAge("");
-    setGender("Male");
-    setLanguage("en");
-    setSurgeryType("");
-    setSurgeryDate("");
-    setHospital("KLH Hospital");
-    setFamilyName("");
-    setFamilyPhone("");
-    setFamilyRelation("");
+  const updateField = (field: string, value: string) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const addMedicine = () => {
+    setForm((prev) => ({
+      ...prev,
+      medicines: [...prev.medicines, { name: "", dosage: "", frequency: "twice daily" }],
+    }));
+  };
+
+  const removeMedicine = (index: number) => {
+    setForm((prev) => ({
+      ...prev,
+      medicines: prev.medicines.filter((_, i) => i !== index),
+    }));
+  };
+
+  const updateMedicine = (index: number, field: string, value: string) => {
+    setForm((prev) => ({
+      ...prev,
+      medicines: prev.medicines.map((m, i) => (i === index ? { ...m, [field]: value } : m)),
+    }));
+  };
+
+  const updateFamily = (index: number, field: string, value: string) => {
+    setForm((prev) => ({
+      ...prev,
+      family_contacts: prev.family_contacts.map((f, i) => (i === index ? { ...f, [field]: value } : f)),
+    }));
+  };
+
+  const addFamily = () => {
+    setForm((prev) => ({
+      ...prev,
+      family_contacts: [...prev.family_contacts, { name: "", phone: "", relation: "" }],
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!name.trim() || !phone.trim() || !age || !surgeryType || !surgeryDate) {
-      toast.error("Please fill in all required fields");
-      return;
-    }
-
-    const phoneNumber = phone.startsWith("+91") ? phone : `+91${phone}`;
-
-    const familyContacts =
-      familyName && familyPhone
-        ? [
-            {
-              name: familyName,
-              phone: familyPhone.startsWith("+91")
-                ? familyPhone
-                : `+91${familyPhone}`,
-              relation: familyRelation || "Spouse",
-            },
-          ]
-        : [];
-
-    const payload = {
-      name: name.trim(),
-      phone: phoneNumber,
-      age: parseInt(age),
-      gender: gender.toLowerCase(),
-      language_preference: language,
-      surgery_type: surgeryType,
-      surgery_date: new Date(surgeryDate).toISOString(),
-      hospital: hospital.trim(),
-      family_contacts: familyContacts,
-      checkin_schedule: { days: [1, 3, 5, 7, 14, 21, 30], time: "10:00" },
-    };
-
-    setLoading(true);
+    setIsLoading(true);
     try {
+      const payload = {
+        ...form,
+        age: parseInt(form.age),
+        phone: form.phone.startsWith("+91") ? form.phone : `+91${form.phone}`,
+        medicines: form.medicines.filter((m) => m.name),
+        family_contacts: form.family_contacts.filter((f) => f.name && f.phone),
+      };
       await createPatient(payload);
-      toast.success("Patient registered! First WhatsApp message sent.");
-      resetForm();
-      onOpenChange(false);
+      toast.success("Patient registered successfully");
       onSuccess();
-    } catch (err: any) {
-      const msg =
-        err?.response?.data?.detail || "Failed to register patient";
-      toast.error(msg);
+      onOpenChange(false);
+      setForm({
+        name: "", phone: "", age: "", gender: "male", language_preference: "english",
+        surgery_type: "", surgery_date: "", hospital: "", additional_notes: "",
+        medicines: [{ name: "", dosage: "", frequency: "twice daily" }],
+        family_contacts: [{ name: "", phone: "", relation: "" }],
+      });
+    } catch {
+      toast.error("Failed to register patient");
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="sm:max-w-[560px] max-h-[90vh] overflow-y-auto border-white/[0.08] p-0"
-        style={{ background: "#0F172A" }}
-      >
-        {/* Header */}
-        <div
-          className="px-6 pt-6 pb-4"
-          style={{
-            background:
-              "linear-gradient(135deg, rgba(59,130,246,0.08) 0%, rgba(6,182,212,0.05) 100%)",
-            borderBottom: "1px solid rgba(255,255,255,0.06)",
-          }}
-        >
-          <DialogHeader>
-            <div className="flex items-center gap-3">
-              <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center"
-                style={{
-                  background: "linear-gradient(135deg, #3B82F6 0%, #06B6D4 100%)",
-                  boxShadow: "0 4px 15px rgba(59,130,246,0.3)",
-                }}
-              >
-                <UserPlus className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <DialogTitle className="text-white text-lg">
-                  Add New Patient
-                </DialogTitle>
-                <DialogDescription className="text-slate-400 text-sm mt-0.5">
-                  Register a patient to start automated follow-ups
-                </DialogDescription>
-              </div>
-            </div>
-          </DialogHeader>
-        </div>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="text-lg">Register New Patient</DialogTitle>
+        </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="px-6 pb-6 space-y-5">
-          {/* Section: Patient Info */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              <User className="w-3.5 h-3.5" />
-              Patient Information
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Name */}
-              <div className="sm:col-span-2 space-y-1.5">
-                <Label className="text-slate-400 text-xs">
-                  Full Name <span className="text-red-400">*</span>
-                </Label>
-                <Input
-                  placeholder="e.g. Rajesh Kumar"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  required
-                  className="bg-white/[0.04] border-white/[0.08] text-white placeholder:text-slate-600 rounded-xl focus:border-blue-500/40 focus:ring-blue-500/15"
-                />
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Patient Info */}
+          <div>
+            <h3 className="text-sm font-semibold text-foreground mb-3">Patient Information</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Full Name *</Label>
+                <Input value={form.name} onChange={(e) => updateField("name", e.target.value)} required placeholder="Patient name" />
               </div>
-
-              {/* Phone */}
-              <div className="space-y-1.5">
-                <Label className="text-slate-400 text-xs">
-                  Phone Number <span className="text-red-400">*</span>
-                </Label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">
-                    +91
-                  </span>
-                  <Input
-                    placeholder="9876543210"
-                    value={phone}
-                    onChange={(e) =>
-                      setPhone(e.target.value.replace(/[^0-9]/g, ""))
-                    }
-                    required
-                    maxLength={10}
-                    className="pl-11 bg-white/[0.04] border-white/[0.08] text-white placeholder:text-slate-600 rounded-xl focus:border-blue-500/40 focus:ring-blue-500/15"
-                  />
+              <div className="space-y-2">
+                <Label>Phone *</Label>
+                <div className="flex gap-2">
+                  <span className="inline-flex items-center px-3 text-sm bg-muted border border-border rounded-md text-muted-foreground">+91</span>
+                  <Input value={form.phone} onChange={(e) => updateField("phone", e.target.value)} required placeholder="9876543210" />
                 </div>
               </div>
-
-              {/* Age */}
-              <div className="space-y-1.5">
-                <Label className="text-slate-400 text-xs">
-                  Age <span className="text-red-400">*</span>
-                </Label>
-                <Input
-                  type="number"
-                  placeholder="45"
-                  value={age}
-                  onChange={(e) => setAge(e.target.value)}
-                  required
-                  min={1}
-                  max={120}
-                  className="bg-white/[0.04] border-white/[0.08] text-white placeholder:text-slate-600 rounded-xl focus:border-blue-500/40 focus:ring-blue-500/15"
-                />
+              <div className="space-y-2">
+                <Label>Age *</Label>
+                <Input type="number" value={form.age} onChange={(e) => updateField("age", e.target.value)} required placeholder="55" />
               </div>
-
-              {/* Gender */}
-              <div className="space-y-1.5">
-                <Label className="text-slate-400 text-xs">Gender</Label>
-                <Select value={gender} onValueChange={setGender}>
-                  <SelectTrigger className="bg-white/[0.04] border-white/[0.08] text-white rounded-xl focus:border-blue-500/40 focus:ring-blue-500/15">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-[#1E293B] border-white/[0.1]">
-                    {genders.map((g) => (
-                      <SelectItem
-                        key={g}
-                        value={g}
-                        className="text-slate-300 focus:bg-white/[0.06] focus:text-white"
-                      >
-                        {g}
-                      </SelectItem>
-                    ))}
+              <div className="space-y-2">
+                <Label>Gender</Label>
+                <Select value={form.gender} onValueChange={(v) => updateField("gender", v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="male">Male</SelectItem>
+                    <SelectItem value="female">Female</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-
-              {/* Language */}
-              <div className="space-y-1.5">
-                <Label className="text-slate-400 text-xs">
-                  Language Preference
-                </Label>
-                <Select value={language} onValueChange={setLanguage}>
-                  <SelectTrigger className="bg-white/[0.04] border-white/[0.08] text-white rounded-xl focus:border-blue-500/40 focus:ring-blue-500/15">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-[#1E293B] border-white/[0.1]">
-                    {languages.map((l) => (
-                      <SelectItem
-                        key={l.value}
-                        value={l.value}
-                        className="text-slate-300 focus:bg-white/[0.06] focus:text-white"
-                      >
-                        {l.label}
-                      </SelectItem>
-                    ))}
+              <div className="space-y-2">
+                <Label>Language</Label>
+                <Select value={form.language_preference} onValueChange={(v) => updateField("language_preference", v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="english">English</SelectItem>
+                    <SelectItem value="hindi">Hindi</SelectItem>
+                    <SelectItem value="telugu">Telugu</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
           </div>
 
-          {/* Section: Surgery Details */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              <Heart className="w-3.5 h-3.5" />
-              Surgery Details
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Surgery Type */}
-              <div className="space-y-1.5">
-                <Label className="text-slate-400 text-xs">
-                  Surgery Type <span className="text-red-400">*</span>
-                </Label>
-                <Select value={surgeryType} onValueChange={setSurgeryType}>
-                  <SelectTrigger className="bg-white/[0.04] border-white/[0.08] text-white rounded-xl focus:border-blue-500/40 focus:ring-blue-500/15">
-                    <SelectValue placeholder="Select surgery" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-[#1E293B] border-white/[0.1]">
-                    {surgeryTypes.map((s) => (
-                      <SelectItem
-                        key={s}
-                        value={s}
-                        className="text-slate-300 focus:bg-white/[0.06] focus:text-white"
-                      >
-                        {s}
-                      </SelectItem>
-                    ))}
+          {/* Medical Info */}
+          <div>
+            <h3 className="text-sm font-semibold text-foreground mb-3">Medical Information</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Surgery Type *</Label>
+                <Select value={form.surgery_type} onValueChange={(v) => updateField("surgery_type", v)}>
+                  <SelectTrigger><SelectValue placeholder="Select surgery" /></SelectTrigger>
+                  <SelectContent>
+                    {surgeryTypes.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
-
-              {/* Surgery Date */}
-              <div className="space-y-1.5">
-                <Label className="text-slate-400 text-xs">
-                  Surgery Date <span className="text-red-400">*</span>
-                </Label>
-                <Input
-                  type="date"
-                  value={surgeryDate}
-                  onChange={(e) => setSurgeryDate(e.target.value)}
-                  required
-                  className="bg-white/[0.04] border-white/[0.08] text-white rounded-xl focus:border-blue-500/40 focus:ring-blue-500/15 [color-scheme:dark]"
-                />
+              <div className="space-y-2">
+                <Label>Surgery Date *</Label>
+                <Input type="date" value={form.surgery_date} onChange={(e) => updateField("surgery_date", e.target.value)} required />
               </div>
-
-              {/* Hospital */}
-              <div className="sm:col-span-2 space-y-1.5">
-                <Label className="text-slate-400 text-xs">Hospital Name</Label>
-                <Input
-                  placeholder="KLH Hospital"
-                  value={hospital}
-                  onChange={(e) => setHospital(e.target.value)}
-                  className="bg-white/[0.04] border-white/[0.08] text-white placeholder:text-slate-600 rounded-xl focus:border-blue-500/40 focus:ring-blue-500/15"
+              <div className="space-y-2 md:col-span-2">
+                <Label>Hospital</Label>
+                <Input value={form.hospital} onChange={(e) => updateField("hospital", e.target.value)} placeholder="Hospital name" />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label>Additional Notes</Label>
+                <Textarea
+                  value={form.additional_notes}
+                  onChange={(e) => updateField("additional_notes", e.target.value)}
+                  placeholder="Pre-existing conditions, allergies, special instructions, patient history, or any other relevant details..."
+                  rows={3}
+                  className="resize-none"
                 />
               </div>
             </div>
           </div>
 
-          {/* Section: Family Contact */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              <Phone className="w-3.5 h-3.5" />
-              Family Contact
-              <span className="text-slate-600 normal-case font-normal tracking-normal">
-                (optional)
-              </span>
+          {/* Medicines */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-foreground">Medicines</h3>
+              <Button type="button" variant="ghost" size="sm" onClick={addMedicine}>
+                <Plus className="w-3.5 h-3.5 mr-1" /> Add
+              </Button>
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Family Name */}
-              <div className="space-y-1.5">
-                <Label className="text-slate-400 text-xs">Contact Name</Label>
-                <Input
-                  placeholder="e.g. Priya Kumar"
-                  value={familyName}
-                  onChange={(e) => setFamilyName(e.target.value)}
-                  className="bg-white/[0.04] border-white/[0.08] text-white placeholder:text-slate-600 rounded-xl focus:border-blue-500/40 focus:ring-blue-500/15"
-                />
-              </div>
-
-              {/* Family Relation */}
-              <div className="space-y-1.5">
-                <Label className="text-slate-400 text-xs">Relation</Label>
-                <Select value={familyRelation} onValueChange={setFamilyRelation}>
-                  <SelectTrigger className="bg-white/[0.04] border-white/[0.08] text-white rounded-xl focus:border-blue-500/40 focus:ring-blue-500/15">
-                    <SelectValue placeholder="Select relation" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-[#1E293B] border-white/[0.1]">
-                    {relations.map((r) => (
-                      <SelectItem
-                        key={r}
-                        value={r}
-                        className="text-slate-300 focus:bg-white/[0.06] focus:text-white"
-                      >
-                        {r}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Family Phone */}
-              <div className="sm:col-span-2 space-y-1.5">
-                <Label className="text-slate-400 text-xs">Contact Phone</Label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">
-                    +91
-                  </span>
-                  <Input
-                    placeholder="9876543210"
-                    value={familyPhone}
-                    onChange={(e) =>
-                      setFamilyPhone(e.target.value.replace(/[^0-9]/g, ""))
-                    }
-                    maxLength={10}
-                    className="pl-11 bg-white/[0.04] border-white/[0.08] text-white placeholder:text-slate-600 rounded-xl focus:border-blue-500/40 focus:ring-blue-500/15"
-                  />
+            <div className="space-y-3">
+              {form.medicines.map((med, i) => (
+                <div key={i} className="flex gap-2 items-start">
+                  <Input placeholder="Medicine name" value={med.name} onChange={(e) => updateMedicine(i, "name", e.target.value)} className="flex-1" />
+                  <Input placeholder="Dosage" value={med.dosage} onChange={(e) => updateMedicine(i, "dosage", e.target.value)} className="w-28" />
+                  <Select value={med.frequency} onValueChange={(v) => updateMedicine(i, "frequency", v)}>
+                    <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="once daily">Once daily</SelectItem>
+                      <SelectItem value="twice daily">Twice daily</SelectItem>
+                      <SelectItem value="thrice daily">Thrice daily</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {form.medicines.length > 1 && (
+                    <Button type="button" variant="ghost" size="icon" onClick={() => removeMedicine(i)} className="shrink-0">
+                      <X className="w-4 h-4" />
+                    </Button>
+                  )}
                 </div>
-              </div>
+              ))}
             </div>
           </div>
 
-          {/* Submit */}
-          <div className="pt-2">
-            <Button
-              type="submit"
-              disabled={loading}
-              className="w-full h-11 rounded-xl text-sm font-semibold text-white border-0 transition-all duration-300 hover:shadow-lg hover:shadow-blue-500/20"
-              style={{
-                background: loading
-                  ? "rgba(59,130,246,0.3)"
-                  : "linear-gradient(135deg, #3B82F6 0%, #06B6D4 100%)",
-              }}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Registering...
-                </>
-              ) : (
-                <>
-                  <UserPlus className="w-4 h-4" />
-                  Register Patient
-                </>
-              )}
+          {/* Family Contacts */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-foreground">Family Contact</h3>
+              <Button type="button" variant="ghost" size="sm" onClick={addFamily}>
+                <Plus className="w-3.5 h-3.5 mr-1" /> Add
+              </Button>
+            </div>
+            {form.family_contacts.map((fam, i) => (
+              <div key={i} className="grid grid-cols-3 gap-2 mb-2">
+                <Input placeholder="Name" value={fam.name} onChange={(e) => updateFamily(i, "name", e.target.value)} />
+                <Input placeholder="Phone" value={fam.phone} onChange={(e) => updateFamily(i, "phone", e.target.value)} />
+                <Input placeholder="Relation" value={fam.relation} onChange={(e) => updateFamily(i, "relation", e.target.value)} />
+              </div>
+            ))}
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type="submit" disabled={isLoading}>
+              {isLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Register Patient
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

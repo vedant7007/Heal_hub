@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useCallback, useRef, use } from "react";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   ArrowLeft, MessageSquare, Phone, Bot, UserRound,
-  Send, Image, Mic, Calendar, Pill, FileText, Activity,
+  Send, Image as ImageIcon, Mic, Calendar, Pill, FileText, Activity,
   TrendingUp, TrendingDown, Minus,
   AlertTriangle, CheckCircle2, Shield,
 } from "lucide-react";
@@ -24,9 +24,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
   getPatient, getCheckins, setHandoffMode, doctorReply,
-  callPatient,
+  callPatient, getAIReport, sendMedicineReminder,
 } from "@/lib/api";
 import { getSocket } from "@/lib/socket";
+import { useUser } from "@/lib/user-context";
 import { toast } from "sonner";
 import type { Patient, CheckIn, Message } from "@/types";
 
@@ -36,6 +37,18 @@ const statusConfig: Record<string, { color: string; bg: string; label: string; d
   red: { color: "text-red-700 dark:text-red-400", bg: "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800", label: "RED", dot: "bg-red-500 glow-red" },
   critical: { color: "text-red-700 dark:text-red-400", bg: "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800", label: "CRITICAL", dot: "bg-red-600 pulse-critical" },
 };
+
+const AUDIO_WAVE_BARS = [8, 12, 10, 14, 7, 16, 9, 13, 11, 15, 8, 12, 10, 14, 7, 16, 9, 13, 11, 15];
+
+/** Parse backend UTC timestamps (stored without 'Z') into proper local Date */
+function parseUTC(ts: string | undefined): Date | null {
+  if (!ts) return null;
+  // If the ISO string has no timezone info, treat it as UTC by appending 'Z'
+  if (!ts.endsWith("Z") && !ts.includes("+") && !ts.includes("-", 10)) {
+    return new Date(ts + "Z");
+  }
+  return new Date(ts);
+}
 
 export default function PatientDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -48,12 +61,16 @@ export default function PatientDetailPage({ params }: { params: Promise<{ id: st
 
 function PatientDetailContent({ id }: { id: string }) {
   const router = useRouter();
+  const { role } = useUser();
   const [patient, setPatient] = useState<Patient | null>(null);
   const [checkins, setCheckins] = useState<CheckIn[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("overview");
   const [message, setMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [aiReport, setAiReport] = useState<string | null>(null);
+  const [reportLang, setReportLang] = useState("en");
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const fetchData = useCallback(async () => {
@@ -125,6 +142,20 @@ function PatientDetailContent({ id }: { id: string }) {
       toast.success("Calling patient...");
     } catch {
       toast.error("Failed to initiate call");
+    }
+  };
+
+  const handleGenerateReport = async () => {
+    setIsGeneratingReport(true);
+    setAiReport(null);
+    try {
+      const res = await getAIReport(id, reportLang);
+      setAiReport(res.data.report);
+      toast.success("AI report generated");
+    } catch {
+      toast.error("Failed to generate report");
+    } finally {
+      setIsGeneratingReport(false);
     }
   };
 
@@ -219,17 +250,19 @@ function PatientDetailContent({ id }: { id: string }) {
                   <Phone className="w-4 h-4 mr-1.5" /> Call
                 </Button>
               </motion.div>
-              <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
-                <Button
-                  variant={isDoctorMode ? "default" : "outline"}
-                  size="sm"
-                  className={isDoctorMode ? "btn-premium text-white" : ""}
-                  onClick={() => handleHandoff(isDoctorMode ? "ai" : "doctor")}
-                >
-                  {isDoctorMode ? <Bot className="w-4 h-4 mr-1.5" /> : <UserRound className="w-4 h-4 mr-1.5" />}
-                  {isDoctorMode ? "Hand to AI" : "Take Over"}
-                </Button>
-              </motion.div>
+              {role === "doctor" && (
+                <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
+                  <Button
+                    variant={isDoctorMode ? "default" : "outline"}
+                    size="sm"
+                    className={isDoctorMode ? "btn-premium text-white" : ""}
+                    onClick={() => handleHandoff(isDoctorMode ? "ai" : "doctor")}
+                  >
+                    {isDoctorMode ? <Bot className="w-4 h-4 mr-1.5" /> : <UserRound className="w-4 h-4 mr-1.5" />}
+                    {isDoctorMode ? "Hand to AI" : "Take Over"}
+                  </Button>
+                </motion.div>
+              )}
             </div>
           </div>
         </motion.div>
@@ -241,7 +274,7 @@ function PatientDetailContent({ id }: { id: string }) {
               { value: "overview", label: "Overview", icon: Activity },
               { value: "conversations", label: "Conversations", icon: MessageSquare },
               { value: "checkins", label: "Check-ins", icon: CheckCircle2 },
-              { value: "photos", label: "Photos", icon: Image },
+              { value: "photos", label: "Photos", icon: ImageIcon },
               { value: "medicines", label: "Medicines", icon: Pill },
               { value: "appointments", label: "Appointments", icon: Calendar },
               { value: "reports", label: "Reports", icon: FileText },
@@ -354,9 +387,8 @@ function PatientDetailContent({ id }: { id: string }) {
                                 initial={{ width: 0 }}
                                 animate={{ width: `${adherence}%` }}
                                 transition={{ duration: 0.8, ease: "easeOut" }}
-                                className={`h-full rounded-full ${
-                                  adherence > 80 ? "bg-emerald-500" : adherence > 50 ? "bg-amber-500" : "bg-red-500"
-                                }`}
+                                className={`h-full rounded-full ${adherence > 80 ? "bg-emerald-500" : adherence > 50 ? "bg-amber-500" : "bg-red-500"
+                                  }`}
                               />
                             </div>
                           </div>
@@ -379,9 +411,8 @@ function PatientDetailContent({ id }: { id: string }) {
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <span className="text-xs text-muted-foreground">Risk Level</span>
-                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${
-                          statusConfig[aiAssessment.risk_level]?.bg || statusConfig.green.bg
-                        } ${statusConfig[aiAssessment.risk_level]?.color || statusConfig.green.color}`}>
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusConfig[aiAssessment.risk_level]?.bg || statusConfig.green.bg
+                          } ${statusConfig[aiAssessment.risk_level]?.color || statusConfig.green.color}`}>
                           {aiAssessment.risk_level?.toUpperCase()}
                         </span>
                       </div>
@@ -395,9 +426,8 @@ function PatientDetailContent({ id }: { id: string }) {
                             initial={{ width: 0 }}
                             animate={{ width: `${aiAssessment.risk_score}%` }}
                             transition={{ duration: 1 }}
-                            className={`h-full rounded-full ${
-                              aiAssessment.risk_score > 70 ? "bg-red-500" : aiAssessment.risk_score > 40 ? "bg-amber-500" : "bg-emerald-500"
-                            }`}
+                            className={`h-full rounded-full ${aiAssessment.risk_score > 70 ? "bg-red-500" : aiAssessment.risk_score > 40 ? "bg-amber-500" : "bg-emerald-500"
+                              }`}
                           />
                         </div>
                       </div>
@@ -485,7 +515,7 @@ function PatientDetailContent({ id }: { id: string }) {
               </div>
 
               {/* Messages */}
-              <ScrollArea className="flex-1 p-4">
+              <ScrollArea className="h-0 flex-1 p-4">
                 <div className="space-y-4 max-w-2xl mx-auto">
                   {conversations.length === 0 ? (
                     <div className="text-center py-12 text-sm text-muted-foreground">
@@ -549,9 +579,8 @@ function PatientDetailContent({ id }: { id: string }) {
                         transition={{ delay: i * 0.05 }}
                         className="relative"
                       >
-                        <div className={`absolute -left-[31px] w-4 h-4 rounded-full border-2 border-background ${
-                          cStatus === "green" ? "bg-emerald-500" : cStatus === "yellow" ? "bg-amber-500" : "bg-red-500"
-                        }`} />
+                        <div className={`absolute -left-[31px] w-4 h-4 rounded-full border-2 border-background ${cStatus === "green" ? "bg-emerald-500" : cStatus === "yellow" ? "bg-amber-500" : "bg-red-500"
+                          }`} />
                         <div className="bg-card border border-border rounded-xl p-4 card-glow">
                           <div className="flex items-center justify-between mb-2">
                             <div className="flex items-center gap-2">
@@ -590,7 +619,7 @@ function PatientDetailContent({ id }: { id: string }) {
                             )}
                             {checkin.wound_photo_url && (
                               <div className="mt-2 flex items-center gap-1.5 text-xs text-primary">
-                                <Image className="w-3.5 h-3.5" /> Wound photo attached
+                                <ImageIcon className="w-3.5 h-3.5" /> Wound photo attached
                               </div>
                             )}
                           </div>
@@ -621,14 +650,13 @@ function PatientDetailContent({ id }: { id: string }) {
                       className="bg-card border border-border rounded-xl overflow-hidden card-glow"
                     >
                       <div className="aspect-square bg-muted flex items-center justify-center">
-                        <Image className="w-8 h-8 text-muted-foreground" />
+                        <ImageIcon className="w-8 h-8 text-muted-foreground" />
                       </div>
                       <div className="p-3">
                         <p className="text-sm font-medium">Day {c.day_number}</p>
                         {c.wound_analysis && (
-                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border mt-1 inline-block ${
-                            statusConfig[c.wound_analysis.risk_level]?.bg || statusConfig.green.bg
-                          }`}>
+                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border mt-1 inline-block ${statusConfig[c.wound_analysis.risk_level]?.bg || statusConfig.green.bg
+                            }`}>
                             {c.wound_analysis.risk_level}
                           </span>
                         )}
@@ -645,7 +673,36 @@ function PatientDetailContent({ id }: { id: string }) {
             {!patient.medicines || patient.medicines.length === 0 ? (
               <EmptyState text="No medicines prescribed" />
             ) : (
-              <div className="space-y-3 max-w-xl">
+              <div className="space-y-4 max-w-xl">
+                {/* Send Reminder Button */}
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800/40 rounded-xl p-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-blue-700 dark:text-blue-400">Medicine Reminder</p>
+                      <p className="text-xs text-blue-600/70 dark:text-blue-400/60 mt-0.5">Send a WhatsApp reminder to take medicines. Patient can reply 1 (taken) or 2 (not taken).</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      className="btn-premium text-white shrink-0"
+                      onClick={async () => {
+                        try {
+                          await sendMedicineReminder(id);
+                          toast.success("Medicine reminder sent on WhatsApp!");
+                        } catch {
+                          toast.error("Failed to send reminder");
+                        }
+                      }}
+                    >
+                      <Pill className="w-4 h-4 mr-1.5" /> Send Reminder
+                    </Button>
+                  </div>
+                </motion.div>
+
+                {/* Medicine Cards */}
                 {patient.medicines.map((med, i) => {
                   const adherence = med.total_count > 0 ? Math.round((med.taken_count / med.total_count) * 100) : 0;
                   return (
@@ -662,17 +719,15 @@ function PatientDetailContent({ id }: { id: string }) {
                           <p className="text-sm font-semibold">{med.name}</p>
                           <p className="text-xs text-muted-foreground">{med.dosage} · {med.frequency}</p>
                         </div>
-                        <span className={`text-sm font-bold ${
-                          adherence > 80 ? "text-emerald-600" : adherence > 50 ? "text-amber-600" : "text-red-600"
-                        }`}>
+                        <span className={`text-sm font-bold ${adherence > 80 ? "text-emerald-600" : adherence > 50 ? "text-amber-600" : "text-red-600"
+                          }`}>
                           {adherence}%
                         </span>
                       </div>
                       <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                         <div
-                          className={`h-full rounded-full transition-all ${
-                            adherence > 80 ? "bg-emerald-500" : adherence > 50 ? "bg-amber-500" : "bg-red-500"
-                          }`}
+                          className={`h-full rounded-full transition-all ${adherence > 80 ? "bg-emerald-500" : adherence > 50 ? "bg-amber-500" : "bg-red-500"
+                            }`}
                           style={{ width: `${adherence}%` }}
                         />
                       </div>
@@ -701,26 +756,87 @@ function PatientDetailContent({ id }: { id: string }) {
 
           {/* Reports Tab */}
           <TabsContent value="reports" className="mt-4">
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-card border border-border rounded-xl p-5 max-w-2xl card-glow"
-            >
-              <h3 className="text-sm font-semibold mb-3">Recovery Summary</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                {patient.name} has been recovering from {patient.surgery_type} surgery for {patient.days_since_surgery} days.
-                Current status is <span className={`font-medium ${status.color}`}>{status.label}</span> with
-                a recovery score of {recovery}%.
-                {painData.length > 0 && ` Average pain score across ${painData.length} check-ins is ${(painData.reduce((s, d) => s + (d.pain || 0), 0) / painData.length).toFixed(1)}/10.`}
-                {checkins.length > 0 && ` Total of ${checkins.length} check-ins completed.`}
-              </p>
-              {aiAssessment && (
-                <div className="mt-4 p-3 bg-muted/50 rounded-lg">
-                  <p className="text-xs text-muted-foreground mb-1">Latest AI Assessment</p>
-                  <p className="text-sm">{aiAssessment.reasoning}</p>
+            <div className="max-w-2xl space-y-4">
+              {/* Quick Summary */}
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-card border border-border rounded-xl p-5 card-glow"
+              >
+                <h3 className="text-sm font-semibold mb-3">Recovery Summary</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  {patient.name} has been recovering from {patient.surgery_type} surgery for {patient.days_since_surgery} days.
+                  Current status is <span className={`font-medium ${status.color}`}>{status.label}</span> with
+                  a recovery score of {recovery}%.
+                  {painData.length > 0 && ` Average pain score across ${painData.length} check-ins is ${(painData.reduce((s, d) => s + (d.pain || 0), 0) / painData.length).toFixed(1)}/10.`}
+                  {checkins.length > 0 && ` Total of ${checkins.length} check-ins completed.`}
+                </p>
+                {aiAssessment && (
+                  <div className="mt-4 p-3 bg-muted/50 rounded-lg">
+                    <p className="text-xs text-muted-foreground mb-1">Latest AI Assessment</p>
+                    <p className="text-sm">{aiAssessment.reasoning}</p>
+                  </div>
+                )}
+              </motion.div>
+
+              {/* AI Report Generator */}
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 }}
+                className="bg-card border border-border rounded-xl p-5 card-glow gradient-border"
+              >
+                <div className="flex items-center gap-2 mb-4">
+                  <Shield className="w-4 h-4 text-primary" />
+                  <h3 className="text-sm font-semibold">AI Report</h3>
                 </div>
-              )}
-            </motion.div>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Generate a comprehensive AI-powered report of this patient&apos;s conversations, check-ins, and recovery progress in any language.
+                </p>
+                <div className="flex items-center gap-3">
+                  <select
+                    value={reportLang}
+                    onChange={(e) => setReportLang(e.target.value)}
+                    className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="en">English</option>
+                    <option value="hi">Hindi</option>
+                    <option value="te">Telugu</option>
+                    <option value="es">Spanish</option>
+                    <option value="fr">French</option>
+                    <option value="de">German</option>
+                  </select>
+                  <Button
+                    onClick={handleGenerateReport}
+                    disabled={isGeneratingReport}
+                    className="btn-premium text-white"
+                  >
+                    {isGeneratingReport ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Shield className="w-4 h-4 mr-2" />
+                        Generate Report
+                      </>
+                    )}
+                  </Button>
+                </div>
+                {aiReport && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mt-4 p-4 bg-muted/50 rounded-lg border border-border"
+                  >
+                    <div className="prose prose-sm dark:prose-invert max-w-none">
+                      <pre className="whitespace-pre-wrap text-sm leading-relaxed font-sans">{aiReport}</pre>
+                    </div>
+                  </motion.div>
+                )}
+              </motion.div>
+            </div>
           </TabsContent>
         </Tabs>
       </div>
@@ -741,28 +857,26 @@ function MessageBubble({ message }: { message: Message }) {
       className={`flex ${isPatient ? "justify-end" : "justify-start"}`}
     >
       <div className={`max-w-[80%] ${isPatient ? "order-1" : "order-1"}`}>
-        <p className={`text-[10px] font-medium mb-1 ${isPatient ? "text-right" : ""} ${
-          isDoctor ? "text-emerald-600 dark:text-emerald-400" : isAI ? "text-primary" : "text-muted-foreground"
-        }`}>
+        <p className={`text-[10px] font-medium mb-1 ${isPatient ? "text-right" : ""} ${isDoctor ? "text-emerald-600 dark:text-emerald-400" : isAI ? "text-primary" : "text-muted-foreground"
+          }`}>
           {isAI ? "Heal Hub AI" : isDoctor ? "Dr." : "Patient"}
         </p>
-        <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-          isPatient
+        <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${isPatient
             ? "bg-muted rounded-tr-sm"
             : isDoctor
               ? "bg-emerald-50 dark:bg-emerald-950/30 border-l-2 border-emerald-500 rounded-tl-sm"
               : "bg-blue-50 dark:bg-blue-950/30 rounded-tl-sm"
-        }`}>
+          }`}>
           {message.content_type === "image" ? (
             <div className="w-40 h-40 bg-muted rounded-lg flex items-center justify-center">
-              <Image className="w-6 h-6 text-muted-foreground" />
+              <ImageIcon className="w-6 h-6 text-muted-foreground" />
             </div>
           ) : message.content_type === "audio" ? (
             <div className="flex items-center gap-2">
               <Mic className="w-4 h-4" />
               <div className="flex gap-0.5">
-                {Array.from({ length: 20 }).map((_, i) => (
-                  <div key={i} className="w-0.5 bg-current opacity-40 rounded-full" style={{ height: Math.random() * 16 + 4 }} />
+                {AUDIO_WAVE_BARS.map((height, i) => (
+                  <div key={i} className="w-0.5 bg-current opacity-40 rounded-full" style={{ height }} />
                 ))}
               </div>
             </div>
@@ -771,7 +885,7 @@ function MessageBubble({ message }: { message: Message }) {
           )}
         </div>
         <p className={`text-[10px] text-muted-foreground mt-0.5 ${isPatient ? "text-right" : ""}`}>
-          {message.timestamp ? format(new Date(message.timestamp), "h:mm a") : ""}
+          {message.timestamp ? format(parseUTC(message.timestamp) || new Date(), "h:mm a") : ""}
         </p>
       </div>
     </motion.div>

@@ -3,6 +3,7 @@ export interface Doctor {
   _id?: string;
   name: string;
   email: string;
+  role: "doctor" | "nurse";
   phone: string;
   specialization: string;
   hospital: string;

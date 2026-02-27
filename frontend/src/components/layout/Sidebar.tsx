@@ -1,170 +1,331 @@
 "use client";
 
+import { useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard,
   Users,
-  AlertTriangle,
+  CalendarDays,
+  Bell,
   BarChart3,
+  UserCog,
   Settings,
-  Heart,
-  Stethoscope,
+  Moon,
+  Sun,
+  LogOut,
+  HeartPulse,
+  PanelLeftClose,
+  PanelLeft,
 } from "lucide-react";
-import { motion } from "framer-motion";
+import { useTheme } from "next-themes";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import type { Doctor } from "@/types";
+import { useMounted } from "@/hooks/use-mounted";
 
-const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/patients", label: "Patients", icon: Users },
-  { href: "/alerts", label: "Alerts", icon: AlertTriangle, hasNotification: true },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/settings", label: "Settings", icon: Settings },
+interface SidebarProps {
+  user: Doctor | null;
+  role: "doctor" | "nurse";
+  alertCount: number;
+  onLogout: () => void;
+}
+
+interface NavItem {
+  label: string;
+  href: string;
+  icon: React.ElementType;
+  section: string;
+  badge?: number;
+  doctorOnly?: boolean;
+}
+
+const navItems: NavItem[] = [
+  { label: "Dashboard", href: "/", icon: LayoutDashboard, section: "OVERVIEW" },
+  { label: "Patients", href: "/patients", icon: Users, section: "OVERVIEW" },
+  { label: "Appointments", href: "/appointments", icon: CalendarDays, section: "OVERVIEW" },
+  { label: "Alerts", href: "/alerts", icon: Bell, section: "MONITORING" },
+  { label: "Analytics", href: "/analytics", icon: BarChart3, section: "MONITORING", doctorOnly: true },
+  { label: "Nurses", href: "/nurses", icon: UserCog, section: "MANAGEMENT", doctorOnly: true },
+  { label: "Settings", href: "/settings", icon: Settings, section: "MANAGEMENT", doctorOnly: true },
 ];
 
-export default function Sidebar() {
+export function Sidebar({ user, role, alertCount, onLogout }: SidebarProps) {
   const pathname = usePathname();
+  const { theme, setTheme } = useTheme();
+  const [collapsed, setCollapsed] = useState(false);
+  const mounted = useMounted();
 
-  if (pathname === "/login") return null;
+  const filteredItems = navItems.filter((item) => !item.doctorOnly || role === "doctor");
+  const sections = [...new Set(filteredItems.map((i) => i.section))];
+
+  const isActive = (href: string) => {
+    if (href === "/") return pathname === "/";
+    return pathname.startsWith(href);
+  };
+
+  const NavLink = ({ item }: { item: NavItem }) => {
+    const active = isActive(item.href);
+    const badge = item.label === "Alerts" ? alertCount : undefined;
+
+    const content = (
+      <motion.div
+        whileHover={{ x: active ? 0 : 3 }}
+        whileTap={{ scale: 0.98 }}
+        transition={{ duration: 0.15 }}
+      >
+        <Link
+          href={item.href}
+          className={`
+            group flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 relative
+            ${active
+              ? "bg-primary/8 text-primary nav-glow rounded-l-none"
+              : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+            }
+          `}
+        >
+          <motion.div
+            animate={active ? { scale: [1, 1.15, 1] } : {}}
+            transition={{ duration: 0.3 }}
+          >
+            {/* @ts-expect-error - Icon typing conflict from lucide-react */}
+            <item.icon className={`w-[18px] h-[18px] shrink-0 transition-colors duration-200 ${active ? "text-primary" : "group-hover:text-foreground"}`} />
+          </motion.div>
+          <AnimatePresence mode="wait">
+            {!collapsed && (
+              <motion.span
+                initial={{ opacity: 0, width: 0 }}
+                animate={{ opacity: 1, width: "auto" }}
+                exit={{ opacity: 0, width: 0 }}
+                transition={{ duration: 0.15 }}
+                className="truncate"
+              >
+                {item.label}
+              </motion.span>
+            )}
+          </AnimatePresence>
+          {badge && badge > 0 && (
+            <span className={`
+              ${collapsed ? "absolute -top-1 -right-1" : "ml-auto"}
+              inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold
+              bg-destructive text-white pulse-badge
+            `}>
+              {badge > 99 ? "99+" : badge}
+            </span>
+          )}
+        </Link>
+      </motion.div>
+    );
+
+    if (collapsed) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>{content}</TooltipTrigger>
+          <TooltipContent side="right" className="font-medium">
+            {item.label}
+            {badge ? ` (${badge})` : ""}
+          </TooltipContent>
+        </Tooltip>
+      );
+    }
+    return content;
+  };
+
+  const mobileItems = filteredItems.slice(0, 5);
 
   return (
-    <aside className="hidden md:flex flex-col w-72 bg-[#0F172A]/80 backdrop-blur-xl border-r border-white/[0.06] relative overflow-hidden">
-      {/* Ambient glow effects */}
-      <div className="absolute top-0 left-0 w-full h-40 bg-gradient-to-b from-blue-500/[0.05] to-transparent pointer-events-none" />
-      <div className="absolute bottom-0 left-0 w-32 h-32 bg-cyan-500/[0.03] rounded-full blur-3xl pointer-events-none" />
-
-      {/* Logo Section */}
-      <div className="flex items-center gap-3.5 px-6 py-6 border-b border-white/[0.06] relative">
-        <div className="relative">
-          {/* Outer glow ring */}
-          <div className="absolute -inset-1.5 bg-gradient-to-r from-blue-500 to-cyan-400 rounded-2xl opacity-20 blur-md animate-pulse" />
-          <div className="relative w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-blue-500/20">
-            <Heart className="w-5 h-5 text-white animate-[heartbeat_1.5s_ease-in-out_infinite]" />
-          </div>
-        </div>
-        <div>
-          <h1 className="text-lg font-bold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent tracking-tight">
-            Heal Hub
-          </h1>
-          <p className="text-[11px] text-slate-500 font-medium tracking-wide uppercase">
-            AI Patient Care
-          </p>
-        </div>
-      </div>
-
-      {/* Navigation Label */}
-      <div className="px-6 pt-6 pb-2">
-        <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-[0.15em]">
-          Main Menu
-        </p>
-      </div>
-
-      {/* Navigation */}
-      <nav className="flex-1 px-3 pb-4 space-y-1">
-        {navItems.map((item) => {
-          const isActive =
-            pathname === item.href ||
-            (item.href !== "/" && pathname.startsWith(item.href));
-          return (
-            <Link key={item.href} href={item.href} className="block">
+    <>
+      {/* Desktop Sidebar */}
+      <motion.aside
+        animate={{ width: collapsed ? 72 : 256 }}
+        transition={{ duration: 0.25, ease: [0.25, 0.46, 0.45, 0.94] }}
+        className="hidden md:flex flex-col h-screen sticky top-0 bg-card border-r border-border z-30 overflow-hidden"
+      >
+        {/* Logo */}
+        <motion.div
+          className="flex items-center gap-3 px-4 h-16 shrink-0 group cursor-default"
+          whileHover={{ scale: 1.01 }}
+        >
+          <motion.div
+            className="w-9 h-9 rounded-xl shrink-0 relative overflow-hidden"
+            whileHover={{ rotate: [0, -5, 5, 0] }}
+            transition={{ duration: 0.4 }}
+          >
+            <Image src="/logo.jpeg" alt="Heal Hub" width={36} height={36} className="w-full h-full object-cover rounded-xl" />
+          </motion.div>
+          <AnimatePresence mode="wait">
+            {!collapsed && (
               <motion.div
-                className={`relative flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-300 group
-                  ${
-                    isActive
-                      ? "text-white"
-                      : "text-slate-400 hover:text-slate-200"
-                  }`}
-                whileHover={{ x: 4 }}
-                transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -8 }}
+                transition={{ duration: 0.2 }}
               >
-                {/* Active indicator: gradient left border */}
-                {isActive && (
-                  <motion.div
-                    className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-7 rounded-full bg-gradient-to-b from-blue-400 to-cyan-400 shadow-[0_0_8px_rgba(59,130,246,0.5)]"
-                    layoutId="activeTab"
-                    transition={{ type: "spring", stiffness: 350, damping: 30 }}
-                  />
+                <h1 className="text-base font-bold text-foreground tracking-tight leading-tight">Heal Hub</h1>
+                <p className="text-[10px] text-muted-foreground leading-tight">AI Recovery Platform</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+
+        <Separator />
+
+        {/* Navigation */}
+        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
+          {sections.map((section) => (
+            <div key={section} className="mb-4">
+              <AnimatePresence mode="wait">
+                {!collapsed && (
+                  <motion.p
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -8 }}
+                    className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider px-3 mb-2"
+                  >
+                    {section}
+                  </motion.p>
                 )}
+              </AnimatePresence>
+              <div className="space-y-0.5">
+                {filteredItems
+                  .filter((item) => item.section === section)
+                  .map((item) => (
+                    <NavLink key={item.href} item={item} />
+                  ))}
+              </div>
+            </div>
+          ))}
+        </nav>
 
-                {/* Active background glow */}
-                {isActive && (
-                  <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-blue-500/[0.12] to-cyan-500/[0.06] border border-blue-500/[0.1]" />
-                )}
-
-                {/* Hover glow (non-active) */}
-                {!isActive && (
-                  <div className="absolute inset-0 rounded-xl bg-white/[0.02] opacity-0 group-hover:opacity-100 transition-opacity duration-300 border border-white/[0.03] group-hover:border-white/[0.06]" />
-                )}
-
-                {/* Icon */}
-                <div className="relative z-10">
-                  <item.icon
-                    className={`w-[18px] h-[18px] transition-all duration-300 ${
-                      isActive
-                        ? "text-blue-400 drop-shadow-[0_0_6px_rgba(59,130,246,0.4)]"
-                        : "text-slate-500 group-hover:text-slate-300"
-                    }`}
-                  />
-                </div>
-
-                {/* Label */}
-                <span className="relative z-10">{item.label}</span>
-
-                {/* Notification dot for Alerts */}
-                {item.hasNotification && (
-                  <span className="relative z-10 ml-auto flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]" />
-                  </span>
+        {/* Bottom section */}
+        <div className="mt-auto shrink-0 p-3 space-y-2">
+          {/* Theme toggle */}
+          {mounted && (
+            <motion.button
+              whileHover={{ x: 3 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              className="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
+            >
+              <motion.div
+                key={theme}
+                initial={{ rotate: -90, opacity: 0 }}
+                animate={{ rotate: 0, opacity: 1 }}
+                transition={{ duration: 0.3 }}
+              >
+                {theme === "dark" ? (
+                  <Sun className="w-[18px] h-[18px] shrink-0" />
+                ) : (
+                  <Moon className="w-[18px] h-[18px] shrink-0" />
                 )}
               </motion.div>
-            </Link>
-          );
-        })}
-      </nav>
+              {!collapsed && <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>}
+            </motion.button>
+          )}
 
-      {/* Separator */}
-      <div className="mx-5 border-t border-white/[0.05]" />
+          {/* Collapse toggle */}
+          <motion.button
+            whileHover={{ x: 3 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={() => setCollapsed(!collapsed)}
+            className="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
+          >
+            <motion.div
+              animate={{ rotate: collapsed ? 180 : 0 }}
+              transition={{ duration: 0.3 }}
+            >
+              {collapsed ? (
+                <PanelLeft className="w-[18px] h-[18px] shrink-0" />
+              ) : (
+                <PanelLeftClose className="w-[18px] h-[18px] shrink-0" />
+              )}
+            </motion.div>
+            {!collapsed && <span>Collapse</span>}
+          </motion.button>
 
-      {/* Doctor Profile Mini Card */}
-      <div className="px-4 py-4">
-        <div className="flex items-center gap-3 px-3 py-3 rounded-xl bg-white/[0.03] border border-white/[0.05] hover:border-white/[0.08] transition-colors duration-300 cursor-pointer group">
-          {/* Avatar */}
-          <div className="relative">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center shadow-md shadow-blue-500/10">
-              <Stethoscope className="w-4 h-4 text-white" />
+          <Separator />
+
+          {/* User card */}
+          <div className="flex items-center gap-3 px-3 py-2">
+            <div className={`w-9 h-9 rounded-full flex items-center justify-center font-semibold text-sm shrink-0 avatar-glow ${
+              role === "nurse" ? "bg-emerald-500/10 text-emerald-600" : "bg-primary/10 text-primary"
+            }`}>
+              {user?.name?.[0] || (role === "nurse" ? "N" : "D")}
             </div>
-            {/* Online indicator */}
-            <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-400 border-2 border-[#0F172A] shadow-[0_0_6px_rgba(52,211,153,0.5)]" />
+            <AnimatePresence mode="wait">
+              {!collapsed && (
+                <motion.div
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -8 }}
+                  className="flex-1 min-w-0"
+                >
+                  <p className="text-sm font-medium truncate">{user?.name || (role === "nurse" ? "Nurse" : "Doctor")}</p>
+                  <p className="text-[11px] text-muted-foreground truncate">
+                    {role === "nurse"
+                      ? (user?.specialization || "Nursing Staff")
+                      : (user?.specialization || "Specialist")}
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-          {/* Info */}
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-slate-200 truncate group-hover:text-white transition-colors">
-              Dr. Smith
-            </p>
-            <p className="text-[11px] text-slate-500 truncate">
-              General Physician
-            </p>
-          </div>
+
+          <motion.div whileHover={{ x: 3 }} whileTap={{ scale: 0.97 }}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onLogout}
+              className="w-full justify-start gap-2 text-muted-foreground hover:text-destructive"
+            >
+              <LogOut className="w-4 h-4" />
+              {!collapsed && "Logout"}
+            </Button>
+          </motion.div>
         </div>
-      </div>
+      </motion.aside>
 
-      {/* Footer */}
-      <div className="px-4 pb-4">
-        <p className="text-[10px] text-slate-600 text-center tracking-wide">
-          Heal Hub v1.0 — HackWithAI 2026
-        </p>
-      </div>
-
-      {/* Heartbeat animation keyframes (injected via style) */}
-      <style jsx global>{`
-        @keyframes heartbeat {
-          0%, 100% { transform: scale(1); }
-          15% { transform: scale(1.15); }
-          30% { transform: scale(1); }
-          45% { transform: scale(1.1); }
-          60% { transform: scale(1); }
-        }
-      `}</style>
-    </aside>
+      {/* Mobile Bottom Nav */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-card/95 backdrop-blur-lg border-t border-border z-50 safe-area-pb">
+        <div className="flex items-center justify-around h-16 px-2">
+          {mobileItems.map((item) => {
+            const active = isActive(item.href);
+            const badge = item.label === "Alerts" ? alertCount : undefined;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`flex flex-col items-center gap-1 py-1 px-3 rounded-lg relative transition-all duration-200 ${active ? "text-primary" : "text-muted-foreground active:scale-95"
+                  }`}
+              >
+                <motion.div
+                  animate={active ? { y: -2 } : { y: 0 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  {/* @ts-expect-error - Icon typing conflict from lucide-react */}
+                  <item.icon className="w-5 h-5" />
+                </motion.div>
+                <span className="text-[10px] font-medium">{item.label}</span>
+                {active && (
+                  <motion.div
+                    layoutId="mobile-nav-indicator"
+                    className="absolute -top-0.5 left-1/2 -translate-x-1/2 w-5 h-0.5 rounded-full bg-primary"
+                    transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                  />
+                )}
+                {badge && badge > 0 && (
+                  <span className="absolute -top-0.5 right-0.5 min-w-[16px] h-[16px] rounded-full bg-destructive text-white text-[9px] font-bold flex items-center justify-center px-1 pulse-badge">
+                    {badge}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
+        </div>
+      </nav>
+    </>
   );
 }

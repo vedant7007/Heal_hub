@@ -53,6 +53,9 @@ export const setHandoffMode = (id: string, mode: "ai" | "doctor") =>
 export const doctorReply = (id: string, message: string) =>
   api.post(`/api/patients/${id}/reply`, { message });
 
+export const getAIReport = (id: string, language: string) =>
+  api.post(`/api/patients/${id}/ai-report`, { language });
+
 // Check-ins
 export const getCheckins = (patientId: string) =>
   api.get(`/api/checkins/${patientId}`);
@@ -65,6 +68,11 @@ export const getActiveAlerts = () => api.get("/api/alerts/active");
 
 export const updateAlert = (id: string, data: Record<string, string>) =>
   api.put(`/api/alerts/${id}`, data);
+
+export const deleteAlert = (id: string) => api.delete(`/api/alerts/${id}`);
+
+export const sendMedicineReminder = (patientId: string) =>
+  api.post(`/api/patients/${patientId}/send-medicine-reminder`);
 
 // Appointments
 export const getAppointments = () => api.get("/api/appointments");
