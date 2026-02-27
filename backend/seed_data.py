@@ -587,7 +587,7 @@ async def seed():
     await db["conversations"].insert_many(conversations)
     print(f"Seeded {len(conversations)} conversations")
 
-    print("\n✅ Seed data complete!")
+    print("\nSeed data complete!")
     print(f"\nLogin credentials:")
     print(f"  Dr. Priya Sharma: priya@healhub.com / doctor123")
     print(f"  Dr. Ravi Reddy:   ravi@healhub.com / doctor123")

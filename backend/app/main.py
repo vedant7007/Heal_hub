@@ -29,7 +29,7 @@ app.add_middleware(
 )
 
 # Mount Socket.IO
-socket_app = socketio.ASGIApp(sio, other_app=app)
+socket_app = socketio.ASGIApp(sio, app)
 
 
 @app.get("/")

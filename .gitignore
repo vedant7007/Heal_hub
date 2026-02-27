@@ -14,3 +14,4 @@ Thumbs.db
 *.log
 venv/
 .venv/
+api_keys.txt
