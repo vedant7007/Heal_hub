@@ -27,3 +27,6 @@ backend/audio_cache/
 Thumbs.db
 *.log
 .vercel
+.claude/
+*.jpeg
+*.png.bak
