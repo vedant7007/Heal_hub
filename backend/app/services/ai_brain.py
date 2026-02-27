@@ -1,5 +1,6 @@
 import json
 import logging
+import traceback
 from datetime import datetime
 from bson import ObjectId
 from app.config import get_settings
@@ -47,8 +48,10 @@ ALWAYS respond in this exact JSON format (no markdown, no code blocks):
 
 
 async def _get_patient_context(patient_id: str) -> dict:
+    print(f"[AI_BRAIN] Loading patient context for: {patient_id}")
     patient = await patients_collection.find_one({"_id": ObjectId(patient_id)})
     if not patient:
+        print(f"[AI_BRAIN] Patient not found!")
         return {}
 
     # Get recent check-ins
@@ -76,41 +79,58 @@ async def _get_patient_context(patient_id: str) -> dict:
     ) or "None listed"
 
     surgery_date = patient.get("surgery_date", utc_now())
-    return {
+
+    lang_map = {"en": "English", "hi": "Hindi", "te": "Telugu"}
+    lang_pref = patient.get("language_preference", "en")
+
+    context = {
         "name": patient.get("name", "Patient"),
         "surgery_type": patient.get("surgery_type", "General"),
         "surgery_date": surgery_date.strftime("%Y-%m-%d") if surgery_date else "Unknown",
         "days_since": days_since(surgery_date) if surgery_date else 0,
-        "language": patient.get("language_preference", "en"),
+        "language": lang_map.get(lang_pref, "English"),
         "status": patient.get("current_status", "green"),
         "symptoms": list(set(all_symptoms))[:10] or ["None reported"],
         "pain_scores": pain_scores[:5] or ["No data"],
         "medicines": medicines_str,
         "previous_checkin_summary": "\n".join(summaries) or "No previous check-ins",
     }
+    print(f"[AI_BRAIN] Context built: patient={context['name']}, surgery={context['surgery_type']}, day={context['days_since']}")
+    return context
 
 
 def _parse_ai_response(text: str) -> dict:
     """Parse JSON from AI response, handling markdown code blocks."""
     text = text.strip()
+    print(f"[AI_BRAIN] Parsing AI response ({len(text)} chars)...")
+
+    # Strip markdown code blocks
     if text.startswith("```"):
         lines = text.split("\n")
         lines = [l for l in lines if not l.strip().startswith("```")]
         text = "\n".join(lines)
 
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        # Try to find JSON object in the text
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start != -1 and end > start:
-            try:
-                return json.loads(text[start:end])
-            except json.JSONDecodeError:
-                pass
+        result = json.loads(text)
+        print(f"[AI_BRAIN] JSON parsed successfully")
+        return result
+    except json.JSONDecodeError as e:
+        print(f"[AI_BRAIN] Direct JSON parse failed: {e}")
 
-    # Fallback
+    # Try to find JSON object in the text
+    start = text.find("{")
+    end = text.rfind("}") + 1
+    if start != -1 and end > start:
+        try:
+            result = json.loads(text[start:end])
+            print(f"[AI_BRAIN] JSON extracted from text successfully")
+            return result
+        except json.JSONDecodeError as e:
+            print(f"[AI_BRAIN] JSON extraction also failed: {e}")
+            print(f"[AI_BRAIN] Raw text snippet: {text[start:start+200]}")
+
+    # Fallback — use the raw text as the reply
+    print(f"[AI_BRAIN] Using raw text as fallback reply")
     return {
         "reply_to_patient": text[:500] if text else "Thank you for your update. Your doctor has been notified.",
         "detected_symptoms": [],
@@ -118,7 +138,7 @@ def _parse_ai_response(text: str) -> dict:
         "medicine_taken": None,
         "risk_level": "green",
         "risk_score": 10,
-        "reasoning": "Could not parse AI response",
+        "reasoning": "Could not parse AI response as JSON",
         "recommended_action": "Continue monitoring",
         "escalation_needed": False,
         "escalation_level": 0,
@@ -128,8 +148,13 @@ def _parse_ai_response(text: str) -> dict:
 
 async def process_message(patient_id: str, message_text: str, message_type: str = "text") -> dict:
     """Core AI processing function. Calls Gemini, falls back to Claude."""
+    print(f"\n[AI_BRAIN] ===== PROCESSING MESSAGE =====")
+    print(f"[AI_BRAIN] Patient ID: {patient_id}")
+    print(f"[AI_BRAIN] Message ({message_type}): {message_text[:100]}")
+
     context = await _get_patient_context(patient_id)
     if not context:
+        print(f"[AI_BRAIN] No context — returning default")
         return {
             "reply_to_patient": "Thank you for your message.",
             "detected_symptoms": [],
@@ -144,22 +169,35 @@ async def process_message(patient_id: str, message_text: str, message_type: str 
     user_msg = f"Patient message ({message_type}): {message_text}"
 
     # Try Gemini first
+    print(f"[AI_BRAIN] Attempting Gemini...")
+    print(f"[AI_BRAIN] GEMINI_API_KEY present: {bool(settings.GEMINI_API_KEY)} (len={len(settings.GEMINI_API_KEY) if settings.GEMINI_API_KEY else 0})")
     try:
         result = await _call_gemini(prompt, user_msg)
         if result:
+            print(f"[AI_BRAIN] Gemini SUCCESS!")
             return result
+        else:
+            print(f"[AI_BRAIN] Gemini returned None (no API key?)")
     except Exception as e:
-        logger.error(f"Gemini failed: {e}")
+        print(f"[AI_BRAIN] Gemini FAILED: {type(e).__name__}: {e}")
+        traceback.print_exc()
 
     # Fallback to Claude
+    print(f"[AI_BRAIN] Attempting Claude fallback...")
+    print(f"[AI_BRAIN] ANTHROPIC_API_KEY present: {bool(settings.ANTHROPIC_API_KEY)} (len={len(settings.ANTHROPIC_API_KEY) if settings.ANTHROPIC_API_KEY else 0})")
     try:
         result = await _call_claude(prompt, user_msg)
         if result:
+            print(f"[AI_BRAIN] Claude SUCCESS!")
             return result
+        else:
+            print(f"[AI_BRAIN] Claude returned None (no API key?)")
     except Exception as e:
-        logger.error(f"Claude failed: {e}")
+        print(f"[AI_BRAIN] Claude FAILED: {type(e).__name__}: {e}")
+        traceback.print_exc()
 
     # Final fallback
+    print(f"[AI_BRAIN] ALL AI SERVICES FAILED — returning generic fallback")
     return {
         "reply_to_patient": "Thank you for your update. I've noted your response and your doctor will review it.",
         "detected_symptoms": [],
@@ -176,36 +214,67 @@ async def process_message(patient_id: str, message_text: str, message_type: str 
 
 async def _call_gemini(system_prompt: str, user_message: str) -> dict:
     if not settings.GEMINI_API_KEY:
+        print(f"[AI_BRAIN] Gemini skipped — no API key")
         return None
 
+    print(f"[AI_BRAIN] Configuring Gemini with API key: {settings.GEMINI_API_KEY[:10]}...")
     import google.generativeai as genai
+    import asyncio
     genai.configure(api_key=settings.GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-2.0-flash")
 
-    response = model.generate_content(
-        f"{system_prompt}\n\n{user_message}",
-        generation_config=genai.types.GenerationConfig(
-            temperature=0.3,
-            max_output_tokens=1000,
-        ),
-    )
+    model = genai.GenerativeModel("gemini-2.0-flash")
+    print(f"[AI_BRAIN] Calling Gemini model: gemini-2.0-flash")
+
+    full_prompt = f"{system_prompt}\n\n{user_message}"
+
+    # Run in thread with strict timeout to fail fast on 429/quota errors
+    def _sync_call():
+        return model.generate_content(
+            full_prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.3,
+                max_output_tokens=1000,
+            ),
+            request_options={"timeout": 15},
+        )
+
+    try:
+        response = await asyncio.wait_for(
+            asyncio.to_thread(_sync_call),
+            timeout=20,
+        )
+    except asyncio.TimeoutError:
+        print(f"[AI_BRAIN] Gemini timed out after 20s")
+        return None
+
+    print(f"[AI_BRAIN] Gemini raw response: {response.text[:200] if response.text else 'EMPTY'}")
     return _parse_ai_response(response.text)
 
 
 async def _call_claude(system_prompt: str, user_message: str) -> dict:
     if not settings.ANTHROPIC_API_KEY:
+        print(f"[AI_BRAIN] Claude skipped — no API key")
         return None
 
+    print(f"[AI_BRAIN] Calling Claude haiku with API key: {settings.ANTHROPIC_API_KEY[:15]}...")
     import anthropic
+    import asyncio
+
     client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
-    response = client.messages.create(
-        model="claude-3-5-haiku-20241022",
-        max_tokens=1000,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_message}],
-    )
-    return _parse_ai_response(response.content[0].text)
+    # Run sync client in thread to not block event loop
+    def _call():
+        return client.messages.create(
+            model="claude-3-haiku-20240307",
+            max_tokens=1000,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_message}],
+        )
+
+    response = await asyncio.to_thread(_call)
+    response_text = response.content[0].text
+    print(f"[AI_BRAIN] Claude raw response: {response_text[:200]}")
+    return _parse_ai_response(response_text)
 
 
 async def generate_checkin_questions(patient_id: str, day_number: int) -> list:
@@ -256,6 +325,5 @@ async def generate_checkin_questions(patient_id: str, day_number: int) -> list:
         ],
     }
 
-    # Find closest day
     closest = min(questions_map.keys(), key=lambda d: abs(d - day_number))
     return questions_map[closest]
