@@ -1,6 +1,8 @@
 import logging
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import socketio
 from app.config import get_settings
 from app.database import ping_db
@@ -56,6 +58,11 @@ app.include_router(alerts.router, prefix="/api/alerts", tags=["Alerts"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(webhook.router, prefix="/api/webhook", tags=["Webhooks"])
 app.include_router(voice.router, prefix="/api/webhook/voice", tags=["Voice"])
+
+# Serve ElevenLabs TTS audio cache as static files
+audio_cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "audio_cache")
+os.makedirs(audio_cache_dir, exist_ok=True)
+app.mount("/api/audio", StaticFiles(directory=audio_cache_dir), name="audio")
 
 
 @app.on_event("startup")

@@ -59,28 +59,44 @@ async def speech_to_text(audio_bytes: bytes, language: str = "en") -> str:
 
 async def text_to_speech(text: str, language: str = "en") -> bytes:
     """Convert text to speech using ElevenLabs."""
+    print(f"[TTS] text_to_speech called — {len(text)} chars")
+
     if not settings.ELEVENLABS_API_KEY:
+        print(f"[TTS] No ElevenLabs API key — skipping")
         return b""
 
+    print(f"[TTS] ElevenLabs key: {settings.ELEVENLABS_API_KEY[:10]}...")
+
     try:
-        from elevenlabs import ElevenLabs
+        import asyncio
 
-        client = ElevenLabs(api_key=settings.ELEVENLABS_API_KEY)
         voice_id = settings.ELEVENLABS_VOICE_ID or "21m00Tcm4TlvDq8ikWAM"
+        print(f"[TTS] Using voice_id: {voice_id}")
 
-        audio = client.text_to_speech.convert(
-            voice_id=voice_id,
-            text=text,
-            model_id="eleven_multilingual_v2",
-        )
+        def _sync_tts():
+            from elevenlabs.client import ElevenLabs
+            client = ElevenLabs(api_key=settings.ELEVENLABS_API_KEY)
+            return client.text_to_speech.convert(
+                voice_id=voice_id,
+                text=text,
+                model_id="eleven_multilingual_v2",
+            )
 
-        # Collect audio bytes from generator
-        audio_bytes = b""
-        for chunk in audio:
-            audio_bytes += chunk
+        print(f"[TTS] Calling ElevenLabs API...")
+        audio = await asyncio.to_thread(_sync_tts)
 
+        # Result might be bytes directly or a generator
+        if isinstance(audio, bytes):
+            audio_bytes = audio
+        else:
+            audio_bytes = b""
+            for chunk in audio:
+                audio_bytes += chunk
+
+        print(f"[TTS] ElevenLabs returned {len(audio_bytes)} bytes")
         return audio_bytes
 
     except Exception as e:
-        logger.error(f"ElevenLabs TTS failed: {e}")
+        print(f"[TTS] ElevenLabs TTS FAILED: {type(e).__name__}: {e}")
+        traceback.print_exc()
         return b""
