@@ -3,9 +3,12 @@ from fastapi.responses import PlainTextResponse
 from app.database import patients_collection, conversations_collection, checkins_collection
 from app.utils.helpers import utc_now, objectid_to_str
 import logging
+import traceback
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+XML_OK = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
 
 
 @router.post("/whatsapp")
@@ -19,28 +22,35 @@ async def whatsapp_webhook(request: Request):
         media_type = form.get("MediaContentType0", "")
         num_media = int(form.get("NumMedia", 0))
 
-        logger.info(f"WhatsApp from {from_number}: {body[:50]}...")
+        print(f"\n{'='*60}")
+        print(f"=== INCOMING WHATSAPP MESSAGE ===")
+        print(f"  From: {from_number}")
+        print(f"  Body: {body}")
+        print(f"  Media: {media_url}")
+        print(f"  Media type: {media_type}")
+        print(f"  Num media: {num_media}")
+        print(f"{'='*60}")
 
         # Clean phone number
         phone = from_number.replace("whatsapp:", "")
+        print(f"[WEBHOOK] Looking up patient with phone: {phone}")
 
         # Look up patient
         patient = await patients_collection.find_one({"phone": phone})
         if not patient:
-            # Try without country code variations
+            # Try without country code — match last 10 digits
+            print(f"[WEBHOOK] Exact match failed, trying last 10 digits: {phone[-10:]}")
             patient = await patients_collection.find_one(
                 {"phone": {"$regex": phone[-10:]}}
             )
 
         if not patient:
-            logger.warning(f"Unknown sender: {phone}")
-            return PlainTextResponse(
-                '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-                media_type="text/xml",
-            )
+            print(f"[WEBHOOK] Patient NOT FOUND for phone: {phone}")
+            return PlainTextResponse(XML_OK, media_type="text/xml")
 
         patient_id = str(patient["_id"])
         language = patient.get("language_preference", "en")
+        print(f"[WEBHOOK] Patient found: {patient['name']} (id={patient_id}, lang={language})")
 
         # Handle media messages
         message_text = body
@@ -48,48 +58,49 @@ async def whatsapp_webhook(request: Request):
 
         if num_media > 0 and media_url:
             if "audio" in media_type or "ogg" in media_type:
-                # Voice note - transcribe
                 message_type = "voice"
+                print(f"[WEBHOOK] Voice note detected, transcribing...")
                 try:
                     from app.services.speech import speech_to_text
                     from app.services.whatsapp import download_media
                     audio_bytes = await download_media(media_url)
                     message_text = await speech_to_text(audio_bytes, language)
-                    logger.info(f"Transcribed voice: {message_text[:50]}")
+                    print(f"[WEBHOOK] Transcribed voice: {message_text}")
                 except Exception as e:
-                    logger.error(f"STT failed: {e}")
+                    print(f"[WEBHOOK] STT FAILED: {e}")
+                    traceback.print_exc()
                     message_text = body or "Voice note received"
 
             elif "image" in media_type:
-                # Photo - analyze wound
                 message_type = "image"
+                print(f"[WEBHOOK] Image detected, analyzing wound...")
                 try:
                     from app.services.whatsapp import download_media
                     from app.services.wound_analyzer import analyze_wound
                     image_bytes = await download_media(media_url)
                     analysis = await analyze_wound(image_bytes)
                     message_text = f"[Photo sent] Wound analysis: {analysis.get('description', 'Image received')}"
-                    logger.info(f"Wound analysis: {analysis}")
+                    print(f"[WEBHOOK] Wound analysis: {analysis}")
                 except Exception as e:
-                    logger.error(f"Wound analysis failed: {e}")
+                    print(f"[WEBHOOK] Wound analysis FAILED: {e}")
+                    traceback.print_exc()
                     message_text = body or "Photo received"
 
         # Check for special commands
         lower_text = (message_text or "").lower().strip()
         if lower_text in ["call me", "mujhe call karo", "call cheyyi"]:
+            print(f"[WEBHOOK] Call command detected")
             try:
                 from app.services.voice_call import initiate_callback
                 await initiate_callback(patient_id)
                 from app.services.whatsapp import send_message
                 await send_message(patient["phone"], "We're calling you now. Please pick up!")
             except Exception as e:
-                logger.error(f"Callback failed: {e}")
-            return PlainTextResponse(
-                '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-                media_type="text/xml",
-            )
+                print(f"[WEBHOOK] Callback FAILED: {e}")
+            return PlainTextResponse(XML_OK, media_type="text/xml")
 
         if lower_text == "help":
+            print(f"[WEBHOOK] Help command detected")
             help_text = (
                 "Available commands:\n"
                 "- Send 'call me' for an AI callback\n"
@@ -102,13 +113,11 @@ async def whatsapp_webhook(request: Request):
                 from app.services.whatsapp import send_message
                 await send_message(patient["phone"], help_text)
             except Exception as e:
-                logger.error(f"Help send failed: {e}")
-            return PlainTextResponse(
-                '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-                media_type="text/xml",
-            )
+                print(f"[WEBHOOK] Help send FAILED: {e}")
+            return PlainTextResponse(XML_OK, media_type="text/xml")
 
         if lower_text == "stop":
+            print(f"[WEBHOOK] Stop command detected")
             await patients_collection.update_one(
                 {"_id": patient["_id"]}, {"$set": {"is_active": False}}
             )
@@ -116,13 +125,11 @@ async def whatsapp_webhook(request: Request):
                 from app.services.whatsapp import send_message
                 await send_message(patient["phone"], "Check-ins paused. Send 'start' to resume. Get well soon!")
             except Exception as e:
-                logger.error(f"Stop send failed: {e}")
-            return PlainTextResponse(
-                '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-                media_type="text/xml",
-            )
+                print(f"[WEBHOOK] Stop send FAILED: {e}")
+            return PlainTextResponse(XML_OK, media_type="text/xml")
 
         if lower_text == "my report":
+            print(f"[WEBHOOK] Report command detected")
             try:
                 from app.services.symptom_analyzer import get_recovery_score
                 score = await get_recovery_score(patient_id)
@@ -136,40 +143,48 @@ async def whatsapp_webhook(request: Request):
                 from app.services.whatsapp import send_message
                 await send_message(patient["phone"], report)
             except Exception as e:
-                logger.error(f"Report failed: {e}")
-            return PlainTextResponse(
-                '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-                media_type="text/xml",
-            )
+                print(f"[WEBHOOK] Report FAILED: {e}")
+            return PlainTextResponse(XML_OK, media_type="text/xml")
 
-        # Normal message - process with AI brain
+        # Translate to English for AI processing
+        detected_lang = "en"
+        english_text = message_text
         try:
             from app.services.translator import detect_language, translate
             detected_lang = detect_language(message_text)
-            english_text = message_text
+            print(f"[WEBHOOK] Detected language: {detected_lang}")
             if detected_lang != "en":
                 english_text = translate(message_text, detected_lang, "en")
-        except Exception:
-            english_text = message_text
-            detected_lang = "en"
+                print(f"[WEBHOOK] Translated to English: {english_text}")
+        except Exception as e:
+            print(f"[WEBHOOK] Translation FAILED: {e}")
+            traceback.print_exc()
 
         # Pass to AI brain
+        print(f"[WEBHOOK] Calling AI brain with: '{english_text[:100]}'")
         try:
             from app.services.ai_brain import process_message
             ai_response = await process_message(patient_id, english_text, message_type)
+            print(f"[WEBHOOK] AI Response received:")
+            print(f"  reply: {ai_response.get('reply_to_patient', '')[:100]}")
+            print(f"  risk: {ai_response.get('risk_level')} score: {ai_response.get('risk_score')}")
+            print(f"  symptoms: {ai_response.get('detected_symptoms')}")
+            print(f"  escalation: {ai_response.get('escalation_needed')}")
         except Exception as e:
-            logger.error(f"AI brain failed: {e}")
+            print(f"[WEBHOOK] AI brain FAILED: {e}")
+            traceback.print_exc()
             ai_response = {
                 "reply_to_patient": "Thank you for your message. Your doctor has been notified.",
                 "detected_symptoms": [],
                 "risk_level": "green",
                 "risk_score": 0,
-                "reasoning": "AI processing error",
+                "reasoning": f"AI processing error: {e}",
                 "escalation_needed": False,
                 "escalation_level": 0,
             }
 
         reply = ai_response.get("reply_to_patient", "Thank you for your update.")
+        print(f"[WEBHOOK] Reply to send: {reply[:100]}")
 
         # Save conversation
         await conversations_collection.update_one(
@@ -183,7 +198,7 @@ async def whatsapp_webhook(request: Request):
                                 "content": message_text,
                                 "content_type": message_type,
                                 "media_url": media_url,
-                                "language": detected_lang if 'detected_lang' in dir() else "en",
+                                "language": detected_lang,
                                 "timestamp": utc_now(),
                             },
                             {
@@ -213,8 +228,8 @@ async def whatsapp_webhook(request: Request):
                 "question": "",
                 "answer": message_text,
                 "answer_type": message_type,
-                "original_language": detected_lang if 'detected_lang' in dir() else "en",
-                "translated_answer": english_text if 'english_text' in dir() else message_text,
+                "original_language": detected_lang,
+                "translated_answer": english_text,
                 "timestamp": utc_now(),
             }],
             "pain_score": ai_response.get("pain_score"),
@@ -231,6 +246,7 @@ async def whatsapp_webhook(request: Request):
             "created_at": utc_now(),
         }
         checkin_result = await checkins_collection.insert_one(checkin_doc)
+        print(f"[WEBHOOK] Check-in saved: {checkin_result.inserted_id}")
 
         # Update patient status
         new_status = ai_response.get("risk_level", "green")
@@ -244,21 +260,26 @@ async def whatsapp_webhook(request: Request):
                 }
             },
         )
+        print(f"[WEBHOOK] Patient status updated to: {new_status}")
 
         # Run escalation if needed
         if ai_response.get("escalation_needed"):
+            print(f"[WEBHOOK] Escalation triggered! Level: {ai_response.get('escalation_level')}")
             try:
                 from app.services.escalation import evaluate_and_escalate
                 await evaluate_and_escalate(patient_id, checkin_doc)
             except Exception as e:
-                logger.error(f"Escalation failed: {e}")
+                print(f"[WEBHOOK] Escalation FAILED: {e}")
 
-        # Send reply
+        # Send reply via WhatsApp
+        print(f"[WEBHOOK] Sending reply via WhatsApp...")
         try:
             from app.services.whatsapp import send_message
             await send_message(patient["phone"], reply)
+            print(f"[WEBHOOK] Reply sent successfully!")
         except Exception as e:
-            logger.error(f"Reply send failed: {e}")
+            print(f"[WEBHOOK] Reply send FAILED: {e}")
+            traceback.print_exc()
 
         # Emit socket event
         try:
@@ -279,12 +300,12 @@ async def whatsapp_webhook(request: Request):
                     "timestamp": utc_now().isoformat(),
                 })
         except Exception as e:
-            logger.warning(f"Socket emit failed: {e}")
+            print(f"[WEBHOOK] Socket emit failed: {e}")
+
+        print(f"[WEBHOOK] === DONE ===\n")
 
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
+        print(f"[WEBHOOK] FATAL ERROR: {e}")
+        traceback.print_exc()
 
-    return PlainTextResponse(
-        '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-        media_type="text/xml",
-    )
+    return PlainTextResponse(XML_OK, media_type="text/xml")
