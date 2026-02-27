@@ -226,8 +226,8 @@ function PatientDetailContent({ id }: { id: string }) {
                   className={isDoctorMode ? "btn-premium text-white" : ""}
                   onClick={() => handleHandoff(isDoctorMode ? "ai" : "doctor")}
                 >
-                  {isDoctorMode ? <UserRound className="w-4 h-4 mr-1.5" /> : <Bot className="w-4 h-4 mr-1.5" />}
-                  {isDoctorMode ? "Doctor Mode" : "AI Mode"}
+                  {isDoctorMode ? <Bot className="w-4 h-4 mr-1.5" /> : <UserRound className="w-4 h-4 mr-1.5" />}
+                  {isDoctorMode ? "Hand to AI" : "Take Over"}
                 </Button>
               </motion.div>
             </div>
@@ -479,8 +479,8 @@ function PatientDetailContent({ id }: { id: string }) {
                   size="sm"
                   onClick={() => handleHandoff(isDoctorMode ? "ai" : "doctor")}
                 >
-                  {isDoctorMode ? <UserRound className="w-3.5 h-3.5 mr-1.5" /> : <Bot className="w-3.5 h-3.5 mr-1.5" />}
-                  {isDoctorMode ? "You" : "AI Handling"}
+                  {isDoctorMode ? <Bot className="w-3.5 h-3.5 mr-1.5" /> : <UserRound className="w-3.5 h-3.5 mr-1.5" />}
+                  {isDoctorMode ? "Hand to AI" : "Take Over"}
                 </Button>
               </div>
 
@@ -688,7 +688,15 @@ function PatientDetailContent({ id }: { id: string }) {
 
           {/* Appointments Tab */}
           <TabsContent value="appointments" className="mt-4">
-            <EmptyState text="No appointments scheduled" action="Schedule Appointment" />
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
+                <Calendar className="w-5 h-5 text-muted-foreground" />
+              </div>
+              <p className="text-sm text-muted-foreground">Manage appointments from the Appointments page</p>
+              <Link href="/appointments">
+                <Button variant="outline" size="sm" className="mt-3">Go to Appointments</Button>
+              </Link>
+            </div>
           </TabsContent>
 
           {/* Reports Tab */}

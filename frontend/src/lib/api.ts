@@ -66,6 +66,18 @@ export const getActiveAlerts = () => api.get("/api/alerts/active");
 export const updateAlert = (id: string, data: Record<string, string>) =>
   api.put(`/api/alerts/${id}`, data);
 
+// Appointments
+export const getAppointments = () => api.get("/api/appointments");
+
+export const createAppointment = (data: Record<string, unknown>) =>
+  api.post("/api/appointments", data);
+
+export const updateAppointment = (id: string, data: Record<string, unknown>) =>
+  api.put(`/api/appointments/${id}`, data);
+
+export const deleteAppointment = (id: string) =>
+  api.delete(`/api/appointments/${id}`);
+
 // Analytics
 export const getOverview = () => api.get("/api/analytics/overview");
 
