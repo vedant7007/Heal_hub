@@ -59,17 +59,47 @@ async def whatsapp_webhook(request: Request):
         if num_media > 0 and media_url:
             if "audio" in media_type or "ogg" in media_type:
                 message_type = "voice"
-                print(f"[WEBHOOK] Voice note detected, transcribing...")
+                print(f"[WEBHOOK] Voice note detected!")
+                print(f"[WEBHOOK] Media URL: {media_url}")
+                print(f"[WEBHOOK] Media type: {media_type}")
                 try:
                     from app.services.speech import speech_to_text
                     from app.services.whatsapp import download_media
+                    print(f"[WEBHOOK] Downloading audio from Twilio...")
                     audio_bytes = await download_media(media_url)
-                    message_text = await speech_to_text(audio_bytes, language)
-                    print(f"[WEBHOOK] Transcribed voice: {message_text}")
+                    print(f"[WEBHOOK] Audio downloaded: {len(audio_bytes)} bytes")
+                    if len(audio_bytes) < 100:
+                        print(f"[WEBHOOK] WARNING: Audio too small, might be an error response")
+
+                    transcript = await speech_to_text(audio_bytes, language)
+                    print(f"[WEBHOOK] STT result: '{transcript}'")
+
+                    if transcript and transcript.strip():
+                        message_text = transcript.strip()
+                    else:
+                        print(f"[WEBHOOK] STT returned empty — sending error reply")
+                        try:
+                            from app.services.whatsapp import send_message
+                            await send_message(
+                                patient["phone"],
+                                "I couldn't understand your voice message. Could you type your message instead?"
+                            )
+                        except Exception:
+                            pass
+                        return PlainTextResponse(XML_OK, media_type="text/xml")
+
                 except Exception as e:
-                    print(f"[WEBHOOK] STT FAILED: {e}")
+                    print(f"[WEBHOOK] STT FAILED: {type(e).__name__}: {e}")
                     traceback.print_exc()
-                    message_text = body or "Voice note received"
+                    try:
+                        from app.services.whatsapp import send_message
+                        await send_message(
+                            patient["phone"],
+                            "I couldn't understand your voice message. Could you type your message instead?"
+                        )
+                    except Exception:
+                        pass
+                    return PlainTextResponse(XML_OK, media_type="text/xml")
 
             elif "image" in media_type:
                 message_type = "image"
@@ -88,7 +118,9 @@ async def whatsapp_webhook(request: Request):
 
         # Check for special commands
         lower_text = (message_text or "").lower().strip()
-        if lower_text in ["call me", "mujhe call karo", "call cheyyi"]:
+        call_phrases = ["call me", "call karo", "mujhe call karo", "call cheyyi", "mujhe call", "call kar do", "phone karo"]
+        is_call_request = any(phrase in lower_text for phrase in call_phrases)
+        if is_call_request:
             print(f"[WEBHOOK] Call command detected")
             try:
                 from app.services.voice_call import initiate_callback
