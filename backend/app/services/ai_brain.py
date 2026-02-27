@@ -7,6 +7,11 @@ from app.config import get_settings
 from app.database import patients_collection, checkins_collection, conversations_collection
 from app.utils.helpers import days_since, utc_now
 
+try:
+    from app.nlp import run_nlp_pipeline
+except ImportError:
+    run_nlp_pipeline = None
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
@@ -142,7 +147,7 @@ def _parse_ai_response(text: str) -> dict:
 
 
 async def process_message(patient_id: str, message_text: str, message_type: str = "text") -> dict:
-    """Core AI processing function. Calls Gemini, falls back to Claude."""
+    """Core AI processing function. Runs NLP pipeline first, then calls LLM."""
     print(f"\n[AI_BRAIN] ===== PROCESSING MESSAGE =====")
     print("[AI_BRAIN] Processing patient message")
     print(f"[AI_BRAIN] Message type: {message_type}")
@@ -160,16 +165,61 @@ async def process_message(patient_id: str, message_text: str, message_type: str 
             "escalation_level": 0,
         }
 
+    # ===== RUN NLP PIPELINE BEFORE LLM =====
+    nlp_result = None
+    try:
+        patient_doc = await patients_collection.find_one({"_id": ObjectId(patient_id)})
+        lang_pref = patient_doc.get("language_preference", "en") if patient_doc else "en"
+        pain_history = context.get("pain_scores", [])
+        if isinstance(pain_history, list) and pain_history and isinstance(pain_history[0], str):
+            pain_history = []  # "No data" placeholder — skip
+
+        if run_nlp_pipeline is None:
+            raise ImportError("NLP modules not available")
+        nlp_result = await run_nlp_pipeline(
+            message=message_text,
+            language=lang_pref,
+            patient=patient_doc or {},
+            pain_history=pain_history,
+        )
+        print(f"[AI_BRAIN] NLP Pipeline complete — 7 modules ran")
+        print(f"[AI_BRAIN] NLP entities: {nlp_result['entities']['symptoms']}")
+        print(f"[AI_BRAIN] NLP pain: {nlp_result['pain']}")
+        print(f"[AI_BRAIN] NLP risk: {nlp_result['risk']['risk_level']} ({nlp_result['risk']['risk_score']})")
+        print(f"[AI_BRAIN] NLP topic: {nlp_result['topic']['predicted_topic']}")
+        print(f"[AI_BRAIN] NLP sentiment: {nlp_result['sentiment']['patient_state']}")
+    except Exception as e:
+        print(f"[AI_BRAIN] NLP Pipeline error (non-fatal): {e}")
+
+    # Build enriched prompt with NLP analysis
     prompt = SYSTEM_PROMPT.format(**context)
+    if nlp_result:
+        nlp_context = (
+            f"\n\n=== PRE-ANALYZED BY OUR NLP PIPELINE (7 modules) ===\n"
+            f"Detected symptoms (NER): {nlp_result['entities']['symptoms']}\n"
+            f"Body parts mentioned: {nlp_result['entities']['body_parts']}\n"
+            f"Medications mentioned: {nlp_result['entities']['medications']}\n"
+            f"Pain score (regex extraction): {nlp_result['pain']['score']}\n"
+            f"Pain trend: {nlp_result['pain_trend'].get('direction', 'unknown')}\n"
+            f"Patient sentiment: {nlp_result['sentiment']['patient_state']}\n"
+            f"Emotional urgency: {nlp_result['sentiment']['urgency']}\n"
+            f"Message topic (TF-IDF): {nlp_result['topic']['predicted_topic']}\n"
+            f"Risk level (our model): {nlp_result['risk']['risk_level']}\n"
+            f"Risk score (our model): {nlp_result['risk']['risk_score']}\n"
+            f"Contributing factors: {nlp_result['risk']['contributing_factors']}\n"
+            f"=== Use this analysis to inform your response. Validate and add clinical reasoning. ===\n"
+        )
+        prompt += nlp_context
+
     user_msg = f"Patient message ({message_type}): {message_text}"
 
     # Try Claude FIRST (primary) — Claude Haiku 4.5
     print(f"[AI_BRAIN] Attempting Claude Haiku 4.5 (PRIMARY)...")
+    result = None
     try:
         result = await _call_claude(prompt, user_msg)
         if result:
             print(f"[AI_BRAIN] Claude SUCCESS!")
-            return result
         else:
             print(f"[AI_BRAIN] Claude returned None (no API key?)")
     except Exception as e:
@@ -177,31 +227,64 @@ async def process_message(patient_id: str, message_text: str, message_type: str 
         traceback.print_exc()
 
     # Fallback to Gemini
-    print(f"[AI_BRAIN] Attempting Gemini 2.0 Flash (fallback)...")
-    try:
-        result = await _call_gemini(prompt, user_msg)
-        if result:
-            print(f"[AI_BRAIN] Gemini SUCCESS!")
-            return result
-        else:
-            print(f"[AI_BRAIN] Gemini returned None")
-    except Exception as e:
-        print(f"[AI_BRAIN] Gemini FAILED: {type(e).__name__}: {e}")
+    if not result:
+        print(f"[AI_BRAIN] Attempting Gemini 2.0 Flash (fallback)...")
+        try:
+            result = await _call_gemini(prompt, user_msg)
+            if result:
+                print(f"[AI_BRAIN] Gemini SUCCESS!")
+            else:
+                print(f"[AI_BRAIN] Gemini returned None")
+        except Exception as e:
+            print(f"[AI_BRAIN] Gemini FAILED: {type(e).__name__}: {e}")
 
-    # Final fallback — should almost never reach here
-    print(f"[AI_BRAIN] ALL AI SERVICES FAILED — returning generic fallback")
-    return {
-        "reply_to_patient": "I'm here to help with your recovery. Could you tell me more about how you're feeling right now?",
-        "detected_symptoms": [],
-        "pain_score": None,
-        "medicine_taken": None,
-        "risk_level": "green",
-        "risk_score": 10,
-        "reasoning": "AI services temporarily unavailable, asked patient for more info",
-        "recommended_action": "Continue monitoring",
-        "escalation_needed": False,
-        "escalation_level": 0,
-    }
+    if not result:
+        print(f"[AI_BRAIN] ALL AI SERVICES FAILED — returning generic fallback")
+        result = {
+            "reply_to_patient": "I'm here to help with your recovery. Could you tell me more about how you're feeling right now?",
+            "detected_symptoms": [],
+            "pain_score": None,
+            "medicine_taken": None,
+            "risk_level": "green",
+            "risk_score": 10,
+            "reasoning": "AI services temporarily unavailable, asked patient for more info",
+            "recommended_action": "Continue monitoring",
+            "escalation_needed": False,
+            "escalation_level": 0,
+        }
+
+    # ===== NLP OVERRIDE: Trust our model over LLM for safety =====
+    if nlp_result:
+        result["nlp_analysis"] = nlp_result
+
+        nlp_risk = nlp_result["risk"]["risk_level"]
+        llm_risk = result.get("risk_level", "green")
+        risk_order = {"green": 0, "yellow": 1, "red": 2, "critical": 3}
+
+        # If our NLP says higher risk than LLM, override (conservative safety)
+        if risk_order.get(nlp_risk, 0) > risk_order.get(llm_risk, 0):
+            print(f"[AI_BRAIN] NLP OVERRIDE: {llm_risk} -> {nlp_risk} (NLP detected higher risk)")
+            result["risk_level"] = nlp_risk
+            result["risk_score"] = max(result.get("risk_score", 0), nlp_result["risk"]["risk_score"])
+            result["reasoning"] = (result.get("reasoning", "") or "") + f" [NLP Override: {nlp_risk} — {nlp_result['risk']['explanation']}]"
+            if risk_order.get(nlp_risk, 0) >= 2:
+                result["escalation_needed"] = True
+                result["escalation_level"] = max(result.get("escalation_level", 0), risk_order[nlp_risk])
+
+        # Merge NLP-detected symptoms the LLM might have missed
+        llm_symptoms = set(result.get("detected_symptoms", []))
+        nlp_symptoms = set(nlp_result["entities"]["symptoms"])
+        merged = list(llm_symptoms | nlp_symptoms)
+        if len(merged) > len(llm_symptoms):
+            print(f"[AI_BRAIN] NLP added symptoms LLM missed: {nlp_symptoms - llm_symptoms}")
+            result["detected_symptoms"] = merged
+
+        # Use NLP pain score if LLM didn't detect one
+        if result.get("pain_score") is None and nlp_result["pain"]["score"] is not None:
+            result["pain_score"] = nlp_result["pain"]["score"]
+            print(f"[AI_BRAIN] NLP provided pain score: {nlp_result['pain']['score']}")
+
+    return result
 
 
 async def _call_gemini(system_prompt: str, user_message: str) -> dict:
