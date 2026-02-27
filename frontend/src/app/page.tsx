@@ -3,13 +3,15 @@
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
-import { Search, Calendar, Sun, Moon, Sunrise, Users } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Search, Calendar, Sun, Moon, Sunrise, Users, Plus } from "lucide-react";
 import { getPatients, getOverview, getActiveAlerts } from "@/lib/api";
 import { Patient, OverviewStats, Alert } from "@/types";
 import StatsOverview from "@/components/dashboard/StatsOverview";
 import PatientCard from "@/components/dashboard/PatientCard";
 import RecentActivity from "@/components/dashboard/RecentActivity";
 import AlertBanner from "@/components/dashboard/AlertBanner";
+import AddPatientDialog from "@/components/dashboard/AddPatientDialog";
 import { motion } from "framer-motion";
 import { format } from "date-fns";
 
@@ -38,6 +40,7 @@ export default function Dashboard() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [addOpen, setAddOpen] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem("healhub_token");
@@ -156,22 +159,34 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Quick stats summary */}
-            <div className="hidden md:flex items-center gap-2">
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06]">
-                <Users className="w-3.5 h-3.5 text-[#3B82F6]" />
-                <span className="text-xs font-medium text-[#94A3B8]">
-                  {stats?.total_patients || 0} patients
-                </span>
-              </div>
-              {(stats?.active_alerts || 0) > 0 && (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#EF4444]/[0.06] border border-[#EF4444]/15">
-                  <div className="w-2 h-2 rounded-full bg-[#EF4444] animate-pulse" />
-                  <span className="text-xs font-medium text-[#EF4444]">
-                    {stats?.active_alerts} alert{(stats?.active_alerts || 0) > 1 ? "s" : ""}
+            {/* Quick stats + Add Patient */}
+            <div className="flex items-center gap-2">
+              <div className="hidden md:flex items-center gap-2">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06]">
+                  <Users className="w-3.5 h-3.5 text-[#3B82F6]" />
+                  <span className="text-xs font-medium text-[#94A3B8]">
+                    {stats?.total_patients || 0} patients
                   </span>
                 </div>
-              )}
+                {(stats?.active_alerts || 0) > 0 && (
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#EF4444]/[0.06] border border-[#EF4444]/15">
+                    <div className="w-2 h-2 rounded-full bg-[#EF4444] animate-pulse" />
+                    <span className="text-xs font-medium text-[#EF4444]">
+                      {stats?.active_alerts} alert{(stats?.active_alerts || 0) > 1 ? "s" : ""}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <Button
+                onClick={() => setAddOpen(true)}
+                className="h-9 px-4 rounded-xl text-xs font-semibold text-white border-0 transition-all duration-300 hover:shadow-lg hover:shadow-blue-500/25 hover:translate-y-[-1px]"
+                style={{
+                  background: "linear-gradient(135deg, #3B82F6 0%, #06B6D4 100%)",
+                }}
+              >
+                <Plus className="w-4 h-4" />
+                <span className="hidden sm:inline">Add Patient</span>
+              </Button>
             </div>
           </div>
         </div>
@@ -303,6 +318,13 @@ export default function Dashboard() {
           <RecentActivity />
         </motion.div>
       </div>
+
+      {/* Add Patient Dialog */}
+      <AddPatientDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onSuccess={loadData}
+      />
     </div>
   );
 }
