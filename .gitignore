@@ -1,17 +1,29 @@
+# Dependencies
 node_modules/
+venv/
+.venv/
+*.egg-info/
+
+# Build output
 .next/
-__pycache__/
-*.pyc
+dist/
+build/
+
+# Environment & secrets
 .env
 .env.local
 .env.production
-*.egg-info/
-dist/
-build/
-.vercel
+api_keys.txt
+
+# Python
+__pycache__/
+*.pyc
+
+# Caches
+backend/audio_cache/
+
+# IDE & OS
 .DS_Store
 Thumbs.db
 *.log
-venv/
-.venv/
-api_keys.txt
+.vercel
