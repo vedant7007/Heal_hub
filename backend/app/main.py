@@ -30,10 +30,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount Socket.IO
-socket_app = socketio.ASGIApp(sio, app)
-
-
 @app.get("/")
 async def root():
     return {"message": "Heal Hub API is running", "status": "ok"}
@@ -91,3 +87,9 @@ async def connect(sid, environ):
 @sio.event
 async def disconnect(sid):
     logger.info(f"Client disconnected: {sid}")
+
+
+# Wrap FastAPI with Socket.IO so uvicorn serves both HTTP + WebSocket
+# This MUST be after all router/mount registrations
+_fastapi_app = app
+app = socketio.ASGIApp(sio, other_asgi_app=_fastapi_app)
