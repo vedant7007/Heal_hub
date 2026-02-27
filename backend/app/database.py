@@ -12,6 +12,7 @@ doctors_collection = db["doctors"]
 checkins_collection = db["checkins"]
 alerts_collection = db["alerts"]
 conversations_collection = db["conversations"]
+appointments_collection = db["appointments"]
 
 
 async def ping_db():

@@ -118,6 +118,20 @@ export interface Message {
   timestamp: string;
 }
 
+export interface Appointment {
+  id: string;
+  patient_id: string;
+  patient_name: string;
+  doctor_id: string;
+  date: string;
+  time: string;
+  type: "follow-up" | "emergency" | "checkup";
+  status: "confirmed" | "pending" | "cancelled" | "completed";
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface OverviewStats {
   total_patients: number;
   active_alerts: number;

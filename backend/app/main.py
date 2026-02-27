@@ -45,7 +45,7 @@ async def health_check():
 
 
 # Import and register routers
-from app.routes import doctors, patients, checkins, alerts, analytics, webhook, voice
+from app.routes import doctors, patients, checkins, alerts, analytics, webhook, voice, appointments
 
 app.include_router(doctors.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(patients.router, prefix="/api/patients", tags=["Patients"])
@@ -54,6 +54,7 @@ app.include_router(alerts.router, prefix="/api/alerts", tags=["Alerts"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(webhook.router, prefix="/api/webhook", tags=["Webhooks"])
 app.include_router(voice.router, prefix="/api/webhook/voice", tags=["Voice"])
+app.include_router(appointments.router, prefix="/api/appointments", tags=["Appointments"])
 
 # Serve ElevenLabs TTS audio cache as static files
 audio_cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "audio_cache")
