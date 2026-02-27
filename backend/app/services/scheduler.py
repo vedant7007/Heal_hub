@@ -1,9 +1,13 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.cron import CronTrigger
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 scheduler = AsyncIOScheduler()
 
@@ -14,12 +18,44 @@ def start_scheduler():
         scheduler.start()
         logger.info("APScheduler started")
 
+    # Schedule medicine reminders at 9 AM, 2 PM, and 9 PM
+    app_tz = ZoneInfo(settings.APP_TIMEZONE)
+    for hour, label in [(9, "morning"), (14, "afternoon"), (21, "evening")]:
+        job_id = f"medicine_reminder_{label}"
+        try:
+            scheduler.add_job(
+                send_medicine_reminders,
+                trigger=CronTrigger(hour=hour, minute=0, timezone=app_tz),
+                id=job_id,
+                replace_existing=True,
+                args=[label],
+            )
+            logger.info(f"Medicine reminder scheduled: {label} at {hour}:00")
+        except Exception as e:
+            logger.error(f"Failed to schedule medicine reminder: {e}")
 
-def schedule_patient_checkins(patient_id: str, days: list, surgery_date: datetime):
+
+def schedule_patient_checkins(patient_id: str, days: list, surgery_date: datetime, schedule_time: str = "10:00"):
     """Schedule check-in jobs for a patient."""
+    app_tz = ZoneInfo(settings.APP_TIMEZONE)
+    hour, minute = 10, 0
+    try:
+        hour_str, minute_str = schedule_time.split(":")
+        hour, minute = int(hour_str), int(minute_str)
+    except Exception:
+        logger.warning("Invalid schedule_time '%s', falling back to 10:00", schedule_time)
+
+    if surgery_date.tzinfo is None:
+        surgery_local = surgery_date.replace(tzinfo=app_tz)
+    else:
+        surgery_local = surgery_date.astimezone(app_tz)
+
+    now_local = datetime.now(app_tz)
+
     for day in days:
-        checkin_time = surgery_date + timedelta(days=day, hours=10)  # 10 AM IST
-        if checkin_time > datetime.utcnow():
+        target_date = surgery_local.date() + timedelta(days=day)
+        checkin_time = datetime.combine(target_date, time(hour=hour, minute=minute), tzinfo=app_tz)
+        if checkin_time > now_local:
             job_id = f"checkin_{patient_id}_day{day}"
             try:
                 scheduler.add_job(
@@ -35,7 +71,7 @@ def schedule_patient_checkins(patient_id: str, days: list, surgery_date: datetim
 
         # Also schedule a 4-hour reminder
         reminder_time = checkin_time + timedelta(hours=4)
-        if reminder_time > datetime.utcnow():
+        if reminder_time > now_local:
             reminder_id = f"reminder_{patient_id}_day{day}"
             try:
                 scheduler.add_job(
@@ -50,21 +86,41 @@ def schedule_patient_checkins(patient_id: str, days: list, surgery_date: datetim
 
 
 async def send_scheduled_checkin(patient_id: str, day_number: int):
-    """Send a scheduled check-in message to a patient."""
+    """Send a structured check-in message to a patient (multi-step flow)."""
     try:
         from app.database import patients_collection
-        from app.services.ai_brain import generate_checkin_questions
-        from app.services.whatsapp import send_message, format_checkin_message
+        from app.services.whatsapp import send_message
+        from app.services.templates import get_template
+        from app.utils.helpers import utc_now
         from bson import ObjectId
 
         patient = await patients_collection.find_one({"_id": ObjectId(patient_id)})
         if not patient or not patient.get("is_active"):
             return
 
-        questions = await generate_checkin_questions(patient_id, day_number)
-        message = format_checkin_message(patient, day_number, questions)
+        lang = patient.get("language_preference", "en")
+        name = patient.get("name", "there")
+
+        # Set active check-in on patient (step 1 = pain question)
+        active_checkin = {
+            "step": 1,
+            "day": day_number,
+            "pain_answer": None,
+            "symptom_answer": None,
+            "medicine_answer": None,
+            "started_at": utc_now(),
+        }
+        await patients_collection.update_one(
+            {"_id": patient["_id"]},
+            {"$set": {"active_checkin": active_checkin}}
+        )
+
+        # Send greeting + pain question
+        greeting = get_template("checkin_greeting", lang, name=name, day=day_number)
+        pain_q = get_template("pain_question", lang)
+        message = f"{greeting}\n\n{pain_q}"
         await send_message(patient["phone"], message)
-        logger.info(f"Scheduled check-in sent to {patient['name']} (day {day_number})")
+        logger.info(f"Structured check-in sent to {name} (day {day_number}, step 1)")
 
     except Exception as e:
         logger.error(f"Scheduled check-in failed: {e}")
@@ -91,13 +147,55 @@ async def send_reminder(patient_id: str, day_number: int):
 
         if not recent:
             lang = patient.get("language_preference", "en")
-            reminders = {
-                "en": f"Hi {patient['name']}, just a gentle reminder to complete your check-in. How are you feeling today?",
-                "hi": f"Namaste {patient['name']}, aapka check-in abhi baki hai. Aap kaisa feel kar rahe hain?",
-                "te": f"Namaskaram {patient['name']}, mee check-in pending undi. Meeru ela feel avutunnaru?",
-            }
-            await send_message(patient["phone"], reminders.get(lang, reminders["en"]))
+            from app.services.templates import get_template
+            reminder_text = get_template("reminder", lang, name=patient["name"])
+            await send_message(patient["phone"], reminder_text)
             logger.info(f"Reminder sent to {patient['name']}")
 
     except Exception as e:
         logger.error(f"Reminder failed: {e}")
+
+
+async def send_medicine_reminders(time_of_day: str):
+    """Send medicine reminders to all active patients who have medicines prescribed."""
+    try:
+        from app.database import patients_collection
+        from app.services.whatsapp import send_message
+        from app.services.templates import get_template
+
+        cursor = patients_collection.find({
+            "is_active": True,
+            "medicines": {"$exists": True, "$ne": []},
+        })
+
+        count = 0
+        async for patient in cursor:
+            try:
+                name = patient.get("name", "there")
+                lang = patient.get("language_preference", "en")
+                medicines = patient.get("medicines", [])
+
+                if not medicines:
+                    continue
+
+                # Build medicine list text
+                med_lines = []
+                for i, med in enumerate(medicines, 1):
+                    med_name = med.get("name", "Medicine")
+                    dosage = med.get("dosage", "")
+                    freq = med.get("frequency", "")
+                    med_lines.append(f"  {i}. *{med_name}* — {dosage} ({freq})")
+
+                medicine_list = "\n".join(med_lines)
+                reminder = get_template("medicine_reminder", lang,
+                                        name=name, medicine_list=medicine_list)
+                await send_message(patient["phone"], reminder)
+                count += 1
+
+            except Exception as e:
+                logger.error(f"Medicine reminder failed for {patient.get('name', '?')}: {e}")
+
+        logger.info(f"Medicine reminders sent: {count} patients ({time_of_day})")
+
+    except Exception as e:
+        logger.error(f"Medicine reminder batch failed: {e}")

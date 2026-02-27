@@ -17,11 +17,11 @@ async def _get_public_url() -> str:
             for t in tunnels:
                 if t.get("public_url", "").startswith("https://"):
                     url = t["public_url"]
-                    print(f"[VOICE_CALL] Using ngrok URL: {url}")
+                    logger.info("Using ngrok URL for voice callbacks")
                     return url
     except Exception:
         pass
-    print(f"[VOICE_CALL] ngrok not found, using APP_URL: {settings.APP_URL}")
+    logger.info("ngrok not found, using APP_URL")
     return settings.APP_URL
 
 
@@ -44,7 +44,7 @@ async def initiate_callback(patient_id: str):
         from twilio.rest import Client
         client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
 
-        print(f"[VOICE_CALL] Calling {phone} with TwiML at {public_url}/api/webhook/voice")
+        logger.info("Initiating voice callback")
         call = client.calls.create(
             to=phone,
             from_=settings.TWILIO_PHONE_NUMBER,
@@ -53,10 +53,8 @@ async def initiate_callback(patient_id: str):
             status_callback_event=["completed"],
         )
         logger.info(f"Call initiated to {phone}: {call.sid}")
-        print(f"[VOICE_CALL] Call SID: {call.sid}")
         return call.sid
 
     except Exception as e:
         logger.error(f"Voice call failed to {phone}: {e}")
-        print(f"[VOICE_CALL] FAILED: {type(e).__name__}: {e}")
         raise

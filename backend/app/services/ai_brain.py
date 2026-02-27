@@ -10,45 +10,42 @@ from app.utils.helpers import days_since, utc_now
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-SYSTEM_PROMPT = """You are Heal Hub AI, a caring and professional post-surgery follow-up nurse assistant.
+SYSTEM_PROMPT = """You are Heal Hub, an AI medical recovery assistant. You are helping a post-surgery patient recover safely.
+
+IMPORTANT RULES:
+1. ALWAYS respond in {language} language. If language is "Hindi", respond entirely in Hindi. If "Telugu", respond entirely in Telugu. If "English", respond in English.
+2. Be warm, caring, and professional. You are a nurse, not a robot.
+3. Never diagnose. Never prescribe. Always recommend consulting the doctor for serious concerns.
+4. Track symptoms carefully. If you detect danger signs (bleeding, high fever, pus, infection), escalate immediately.
+5. Your JSON response must include reply_to_patient in the PATIENT'S LANGUAGE.
 
 Patient Info:
 - Name: {name}
 - Surgery: {surgery_type} on {surgery_date} ({days_since} days ago)
 - Language: {language}
 - Current Status: {status}
+- Pain history: {pain_scores}
 - Known symptoms: {symptoms}
-- Pain trend: {pain_scores}
 - Medicines: {medicines}
+- Previous check-ins: {previous_checkin_summary}
 
-Previous check-in summary:
-{previous_checkin_summary}
-
-Your tasks:
-1. Understand the patient's message and detect any symptoms: pain, swelling, fever, bleeding, redness, discharge, nausea, breathlessness
-2. Score the risk: green (normal recovery), yellow (needs monitoring), red (alert doctor), critical (emergency)
-3. Provide your reasoning for the risk assessment
-4. Reply to the patient in {language} — be warm, empathetic, not robotic
-5. If they ask medical questions, answer carefully with disclaimers
-
-ALWAYS respond in this exact JSON format (no markdown, no code blocks):
+Respond with ONLY this JSON (no markdown, no code blocks):
 {{
-  "reply_to_patient": "string (in patient's language)",
-  "detected_symptoms": ["array of symptoms"],
+  "reply_to_patient": "your reply IN THE PATIENT'S LANGUAGE ({language})",
+  "detected_symptoms": [],
   "pain_score": null,
   "medicine_taken": null,
-  "risk_level": "green",
+  "risk_level": "green|yellow|red|critical",
   "risk_score": 0,
-  "reasoning": "string (in English, explain WHY this risk level)",
-  "recommended_action": "string (what should happen next)",
+  "reasoning": "English explanation for doctor",
+  "recommended_action": "English recommendation",
   "escalation_needed": false,
-  "escalation_level": 0,
-  "next_question": null
+  "escalation_level": 0
 }}"""
 
 
 async def _get_patient_context(patient_id: str) -> dict:
-    print(f"[AI_BRAIN] Loading patient context for: {patient_id}")
+    print("[AI_BRAIN] Loading patient context")
     patient = await patients_collection.find_one({"_id": ObjectId(patient_id)})
     if not patient:
         print(f"[AI_BRAIN] Patient not found!")
@@ -95,7 +92,7 @@ async def _get_patient_context(patient_id: str) -> dict:
         "medicines": medicines_str,
         "previous_checkin_summary": "\n".join(summaries) or "No previous check-ins",
     }
-    print(f"[AI_BRAIN] Context built: patient={context['name']}, surgery={context['surgery_type']}, day={context['days_since']}")
+    print(f"[AI_BRAIN] Context built for day={context['days_since']}")
     return context
 
 
@@ -127,7 +124,6 @@ def _parse_ai_response(text: str) -> dict:
             return result
         except json.JSONDecodeError as e:
             print(f"[AI_BRAIN] JSON extraction also failed: {e}")
-            print(f"[AI_BRAIN] Raw text snippet: {text[start:start+200]}")
 
     # Fallback — use the raw text as the reply
     print(f"[AI_BRAIN] Using raw text as fallback reply")
@@ -142,15 +138,14 @@ def _parse_ai_response(text: str) -> dict:
         "recommended_action": "Continue monitoring",
         "escalation_needed": False,
         "escalation_level": 0,
-        "next_question": None,
     }
 
 
 async def process_message(patient_id: str, message_text: str, message_type: str = "text") -> dict:
     """Core AI processing function. Calls Gemini, falls back to Claude."""
     print(f"\n[AI_BRAIN] ===== PROCESSING MESSAGE =====")
-    print(f"[AI_BRAIN] Patient ID: {patient_id}")
-    print(f"[AI_BRAIN] Message ({message_type}): {message_text[:100]}")
+    print("[AI_BRAIN] Processing patient message")
+    print(f"[AI_BRAIN] Message type: {message_type}")
 
     context = await _get_patient_context(patient_id)
     if not context:
@@ -168,8 +163,8 @@ async def process_message(patient_id: str, message_text: str, message_type: str 
     prompt = SYSTEM_PROMPT.format(**context)
     user_msg = f"Patient message ({message_type}): {message_text}"
 
-    # Try Claude FIRST (primary) — Gemini free tier is quota-exhausted
-    print(f"[AI_BRAIN] Attempting Claude (PRIMARY)...")
+    # Try Claude FIRST (primary) — Claude Haiku 4.5
+    print(f"[AI_BRAIN] Attempting Claude Haiku 4.5 (PRIMARY)...")
     try:
         result = await _call_claude(prompt, user_msg)
         if result:
@@ -182,7 +177,7 @@ async def process_message(patient_id: str, message_text: str, message_type: str 
         traceback.print_exc()
 
     # Fallback to Gemini
-    print(f"[AI_BRAIN] Attempting Gemini (fallback)...")
+    print(f"[AI_BRAIN] Attempting Gemini 2.0 Flash (fallback)...")
     try:
         result = await _call_gemini(prompt, user_msg)
         if result:
@@ -214,7 +209,7 @@ async def _call_gemini(system_prompt: str, user_message: str) -> dict:
         print(f"[AI_BRAIN] Gemini skipped — no API key")
         return None
 
-    print(f"[AI_BRAIN] Configuring Gemini with API key: {settings.GEMINI_API_KEY[:10]}...")
+    print("[AI_BRAIN] Configuring Gemini client")
     import google.generativeai as genai
     import asyncio
     genai.configure(api_key=settings.GEMINI_API_KEY)
@@ -244,7 +239,7 @@ async def _call_gemini(system_prompt: str, user_message: str) -> dict:
         print(f"[AI_BRAIN] Gemini timed out after 20s")
         return None
 
-    print(f"[AI_BRAIN] Gemini raw response: {response.text[:200] if response.text else 'EMPTY'}")
+    print("[AI_BRAIN] Gemini response received")
     return _parse_ai_response(response.text)
 
 
@@ -253,7 +248,7 @@ async def _call_claude(system_prompt: str, user_message: str) -> dict:
         print(f"[AI_BRAIN] Claude skipped — no API key")
         return None
 
-    print(f"[AI_BRAIN] Calling Claude haiku with API key: {settings.ANTHROPIC_API_KEY[:15]}...")
+    print("[AI_BRAIN] Calling Claude Haiku 4.5")
     import anthropic
     import asyncio
 
@@ -262,7 +257,7 @@ async def _call_claude(system_prompt: str, user_message: str) -> dict:
     # Run sync client in thread to not block event loop
     def _call():
         return client.messages.create(
-            model="claude-3-haiku-20240307",
+            model="claude-haiku-4-5-20251001",
             max_tokens=1000,
             system=system_prompt,
             messages=[{"role": "user", "content": user_message}],
@@ -270,7 +265,7 @@ async def _call_claude(system_prompt: str, user_message: str) -> dict:
 
     response = await asyncio.to_thread(_call)
     response_text = response.content[0].text
-    print(f"[AI_BRAIN] Claude raw response: {response_text[:200]}")
+    print("[AI_BRAIN] Claude response received")
     return _parse_ai_response(response_text)
 
 
