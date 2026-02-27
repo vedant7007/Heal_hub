@@ -35,7 +35,7 @@ async def seed():
     db = client.get_default_database("healhub")
 
     # Clear existing data
-    for col in ["doctors", "patients", "checkins", "alerts", "conversations", "call_sessions"]:
+    for col in ["doctors", "patients", "checkins", "alerts", "conversations", "call_sessions", "appointments"]:
         await db[col].delete_many({})
 
     print("Cleared existing data")
@@ -589,10 +589,91 @@ async def seed():
     await db["conversations"].insert_many(conversations)
     print(f"Seeded {len(conversations)} conversations")
 
+    # ── Nurse ──
+    nurse = {
+        "name": "Anitha Reddy",
+        "email": "anitha@healhub.com",
+        "password": pwd_context.hash("nurse123"),
+        "phone": "+919876543212",
+        "specialization": "Post-Surgical Care",
+        "hospital": "Apollo Hospital, Hyderabad",
+        "role": "nurse",
+        "created_at": days_ago(20),
+    }
+    await db["doctors"].insert_one(nurse)
+    print("Seeded 1 nurse")
+
+    # ── Appointments ──
+    appointments = [
+        {
+            "patient_id": str(patient_ids[0]),
+            "patient_name": "Ramesh Kumar",
+            "doctor_id": str(doctor1_id),
+            "doctor_name": "Dr. Priya Sharma",
+            "type": "Follow-up",
+            "date": (utc_now() + timedelta(days=7)).strftime("%Y-%m-%d"),
+            "time": "10:00 AM",
+            "status": "scheduled",
+            "notes": "2-week post-op follow-up. Check knee mobility and wound healing.",
+            "created_at": utc_now(),
+        },
+        {
+            "patient_id": str(patient_ids[2]),
+            "patient_name": "Suresh Babu",
+            "doctor_id": str(doctor1_id),
+            "doctor_name": "Dr. Priya Sharma",
+            "type": "Urgent Review",
+            "date": utc_now().strftime("%Y-%m-%d"),
+            "time": "2:00 PM",
+            "status": "scheduled",
+            "notes": "Urgent: Possible surgical site infection. Review wound and prescribe antibiotics.",
+            "created_at": utc_now(),
+        },
+        {
+            "patient_id": str(patient_ids[3]),
+            "patient_name": "Anjali Reddy",
+            "doctor_id": str(doctor2_id),
+            "doctor_name": "Dr. Ravi Reddy",
+            "type": "Emergency",
+            "date": utc_now().strftime("%Y-%m-%d"),
+            "time": "11:00 AM",
+            "status": "scheduled",
+            "notes": "EMERGENCY: Post-cardiac patient unresponsive for 2 days. Chest pain reported.",
+            "created_at": utc_now(),
+        },
+        {
+            "patient_id": str(patient_ids[4]),
+            "patient_name": "Ravi Teja",
+            "doctor_id": str(doctor1_id),
+            "doctor_name": "Dr. Priya Sharma",
+            "type": "Follow-up",
+            "date": (utc_now() + timedelta(days=14)).strftime("%Y-%m-%d"),
+            "time": "11:30 AM",
+            "status": "scheduled",
+            "notes": "1-month post-op review. Assess physiotherapy progress.",
+            "created_at": utc_now(),
+        },
+        {
+            "patient_id": str(patient_ids[1]),
+            "patient_name": "Lakshmi Devi",
+            "doctor_id": str(doctor1_id),
+            "doctor_name": "Dr. Priya Sharma",
+            "type": "Follow-up",
+            "date": (utc_now() - timedelta(days=1)).strftime("%Y-%m-%d"),
+            "time": "3:00 PM",
+            "status": "completed",
+            "notes": "Reviewed increasing pain. Adjusted medication dosage.",
+            "created_at": days_ago(1),
+        },
+    ]
+    await db["appointments"].insert_many(appointments)
+    print(f"Seeded {len(appointments)} appointments")
+
     print("\nSeed data complete!")
     print(f"\nLogin credentials:")
     print(f"  Dr. Priya Sharma: priya@healhub.com / doctor123")
     print(f"  Dr. Ravi Reddy:   ravi@healhub.com / doctor123")
+    print(f"  Nurse Anitha:     anitha@healhub.com / nurse123")
 
     client.close()
 

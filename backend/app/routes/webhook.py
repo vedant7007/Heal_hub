@@ -29,6 +29,10 @@ _phone_limiter = SlidingWindowRateLimiter()
 
 
 def _validate_twilio_signature(request: Request, form_data: dict) -> bool:
+    # Skip validation in local dev (no ngrok URL configured)
+    if settings.APP_URL.startswith("http://localhost"):
+        return True
+
     signature = request.headers.get("X-Twilio-Signature")
     if not signature or not settings.TWILIO_AUTH_TOKEN:
         return False
