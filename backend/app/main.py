@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Socket.IO server
-sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins=settings.SOCKET_CORS_ORIGINS)
+sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins=settings.get_socket_cors_origins())
 
 app = FastAPI(
     title="Heal Hub API",
@@ -24,7 +24,7 @@ app = FastAPI(
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=settings.get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

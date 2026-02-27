@@ -28,5 +28,5 @@ def test_settings_parse_csv_origins():
         CORS_ORIGINS="http://localhost:3000,https://healhub.app",
         SOCKET_CORS_ORIGINS="http://localhost:3000,https://healhub.app",
     )
-    assert s.CORS_ORIGINS == ["http://localhost:3000", "https://healhub.app"]
-    assert s.SOCKET_CORS_ORIGINS == ["http://localhost:3000", "https://healhub.app"]
+    assert s.get_cors_origins() == ["http://localhost:3000", "https://healhub.app"]
+    assert s.get_socket_cors_origins() == ["http://localhost:3000", "https://healhub.app"]

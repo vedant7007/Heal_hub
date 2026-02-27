@@ -1,4 +1,4 @@
-from pydantic import Field, field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
@@ -30,19 +30,18 @@ class Settings(BaseSettings):
     APP_URL: str = "http://localhost:8000"
     FRONTEND_URL: str = "http://localhost:3000"
     APP_TIMEZONE: str = "Asia/Kolkata"
-    CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
-    SOCKET_CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    CORS_ORIGINS: str = "http://localhost:3000"
+    SOCKET_CORS_ORIGINS: str = "http://localhost:3000"
     JWT_SECRET: str
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRATION_HOURS: int = 72
     PORT: int = 8000
 
-    @field_validator("CORS_ORIGINS", "SOCKET_CORS_ORIGINS", mode="before")
-    @classmethod
-    def _parse_csv_list(cls, value):
-        if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
-        return value
+    def get_cors_origins(self) -> list[str]:
+        return [s.strip() for s in self.CORS_ORIGINS.split(",") if s.strip()]
+
+    def get_socket_cors_origins(self) -> list[str]:
+        return [s.strip() for s in self.SOCKET_CORS_ORIGINS.split(",") if s.strip()]
 
     model_config = SettingsConfigDict(
         env_file=".env",
