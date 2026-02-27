@@ -13,7 +13,7 @@ import {
   Pill, ChevronDown, ChevronUp, Bot, User, Mic, Image, FileText,
   AlertTriangle, Heart, Shield, Stethoscope, TrendingUp,
 } from "lucide-react";
-import { getPatient, sendMessage, callPatient } from "@/lib/api";
+import { getPatient, sendMessage, callPatient, setHandoffMode, doctorReply } from "@/lib/api";
 import { Patient, CheckIn, Message } from "@/types";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
@@ -204,6 +204,9 @@ export default function PatientDetailPage() {
   const [sending, setSending] = useState(false);
   const [activeTab, setActiveTab] = useState("timeline");
   const [expandedCheckins, setExpandedCheckins] = useState<Set<string>>(new Set());
+  const [replyText, setReplyText] = useState("");
+  const [replyingSending, setReplyingSending] = useState(false);
+  const [handoffLoading, setHandoffLoading] = useState(false);
 
   const id = params.id as string;
 
@@ -247,6 +250,36 @@ export default function PatientDetailPage() {
       toast.success("Call initiated!");
     } catch {
       toast.error("Call failed");
+    }
+  };
+
+  const handleToggleHandoff = async () => {
+    if (!patient) return;
+    const newMode = patient.mode === "doctor" ? "ai" : "doctor";
+    setHandoffLoading(true);
+    try {
+      await setHandoffMode(id, newMode);
+      toast.success(newMode === "doctor" ? "You've taken over the conversation" : "Handed back to AI");
+      loadPatient();
+    } catch {
+      toast.error("Failed to change mode");
+    } finally {
+      setHandoffLoading(false);
+    }
+  };
+
+  const handleDoctorReply = async () => {
+    if (!replyText.trim()) return;
+    setReplyingSending(true);
+    try {
+      await doctorReply(id, replyText);
+      toast.success("Reply sent via WhatsApp!");
+      setReplyText("");
+      loadPatient();
+    } catch {
+      toast.error("Failed to send reply");
+    } finally {
+      setReplyingSending(false);
     }
   };
 
@@ -672,15 +705,44 @@ export default function PatientDetailPage() {
             {/* ======================================================= */}
             <TabsContent value="conversations" className="mt-5">
               <Card className="bg-[#0F172A]/60 backdrop-blur-sm border-[#334155]/50 rounded-2xl overflow-hidden">
-                {/* Chat header */}
-                <div className="px-5 py-3 border-b border-[#334155]/50 flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#3B82F6] to-[#06B6D4] flex items-center justify-center">
-                    <MessageSquare className="w-4 h-4 text-white" />
+                {/* Chat header with handoff toggle */}
+                <div className="px-5 py-3 border-b border-[#334155]/50 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#3B82F6] to-[#06B6D4] flex items-center justify-center">
+                      <MessageSquare className="w-4 h-4 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-white">Conversation History</p>
+                      <p className="text-[10px] text-[#475569]">
+                        {conversations.length} messages
+                        {patient.mode === "doctor" && (
+                          <span className="ml-1.5 text-amber-400">- Doctor mode active</span>
+                        )}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-white">Conversation History</p>
-                    <p className="text-[10px] text-[#475569]">{conversations.length} messages</p>
-                  </div>
+                  <Button
+                    onClick={handleToggleHandoff}
+                    disabled={handoffLoading}
+                    size="sm"
+                    className={`h-8 px-3 rounded-lg text-xs font-medium border-0 transition-all ${
+                      patient.mode === "doctor"
+                        ? "bg-amber-500/15 text-amber-400 hover:bg-amber-500/25"
+                        : "bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25"
+                    }`}
+                  >
+                    {patient.mode === "doctor" ? (
+                      <>
+                        <Bot className="w-3.5 h-3.5 mr-1" />
+                        Hand Back to AI
+                      </>
+                    ) : (
+                      <>
+                        <Stethoscope className="w-3.5 h-3.5 mr-1" />
+                        Take Over
+                      </>
+                    )}
+                  </Button>
                 </div>
 
                 {/* Messages */}
@@ -692,6 +754,8 @@ export default function PatientDetailPage() {
                     </div>
                   ) : (
                     conversations.map((msg, i) => {
+                      const isPatient = msg.role === "patient";
+                      const isDoctor = msg.role === "doctor";
                       const isAI = msg.role === "ai";
                       return (
                         <motion.div
@@ -699,28 +763,41 @@ export default function PatientDetailPage() {
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ delay: i * 0.04, duration: 0.3 }}
-                          className={`flex ${isAI ? "justify-start" : "justify-end"}`}
+                          className={`flex ${isPatient ? "justify-end" : "justify-start"}`}
                         >
-                          <div className={`flex items-end gap-2 max-w-[80%] ${isAI ? "" : "flex-row-reverse"}`}>
+                          <div className={`flex items-end gap-2 max-w-[80%] ${isPatient ? "flex-row-reverse" : ""}`}>
                             {/* Avatar */}
                             <div
                               className={`w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center ${
-                                isAI
+                                isDoctor
+                                  ? "bg-gradient-to-br from-[#22C55E] to-[#10B981]"
+                                  : isAI
                                   ? "bg-gradient-to-br from-[#3B82F6] to-[#06B6D4]"
                                   : "bg-gradient-to-br from-[#8B5CF6] to-[#EC4899]"
                               }`}
                             >
-                              {isAI ? <Bot className="w-3.5 h-3.5 text-white" /> : <User className="w-3.5 h-3.5 text-white" />}
+                              {isDoctor ? (
+                                <Stethoscope className="w-3.5 h-3.5 text-white" />
+                              ) : isAI ? (
+                                <Bot className="w-3.5 h-3.5 text-white" />
+                              ) : (
+                                <User className="w-3.5 h-3.5 text-white" />
+                              )}
                             </div>
 
                             {/* Bubble */}
                             <div
                               className={`px-4 py-2.5 rounded-2xl text-sm ${
-                                isAI
+                                isDoctor
+                                  ? "bg-gradient-to-br from-[#22C55E]/25 to-[#10B981]/15 text-white rounded-bl-md border border-[#22C55E]/20"
+                                  : isAI
                                   ? "bg-gradient-to-br from-[#3B82F6]/25 to-[#06B6D4]/15 text-white rounded-bl-md border border-[#3B82F6]/20"
                                   : "bg-[#1E293B]/80 text-[#F8FAFC] rounded-br-md border border-[#334155]/50"
                               }`}
                             >
+                              {isDoctor && (
+                                <p className="text-[10px] font-semibold text-emerald-400 mb-1">Dr. Reply</p>
+                              )}
                               <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                               <div className="flex items-center gap-2 mt-1.5">
                                 {msg.content_type && msg.content_type !== "text" && (
@@ -745,6 +822,33 @@ export default function PatientDetailPage() {
                     })
                   )}
                 </div>
+
+                {/* Doctor reply input — only when in doctor mode */}
+                {patient.mode === "doctor" && (
+                  <div className="px-4 py-3 border-t border-[#334155]/50 bg-[#0F172A]/80">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        placeholder="Type your reply to patient..."
+                        value={replyText}
+                        onChange={(e) => setReplyText(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleDoctorReply()}
+                        className="flex-1 bg-white/[0.04] border-white/[0.08] text-white text-sm placeholder:text-[#475569] rounded-xl focus:border-emerald-500/40 focus:ring-emerald-500/15"
+                      />
+                      <Button
+                        onClick={handleDoctorReply}
+                        disabled={replyingSending || !replyText.trim()}
+                        size="sm"
+                        className="h-9 px-4 rounded-xl text-white border-0"
+                        style={{ background: "linear-gradient(135deg, #22C55E 0%, #10B981 100%)" }}
+                      >
+                        <Send className="w-4 h-4" />
+                      </Button>
+                    </div>
+                    <p className="text-[10px] text-[#475569] mt-1.5">
+                      Messages are sent via WhatsApp as &quot;Dr. [Your Name]&quot;
+                    </p>
+                  </div>
+                )}
               </Card>
             </TabsContent>
 

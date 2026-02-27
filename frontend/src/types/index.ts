@@ -44,6 +44,7 @@ export interface Patient {
   current_status: "green" | "yellow" | "red" | "critical";
   risk_score: number;
   medicines: Medicine[];
+  mode?: "ai" | "doctor";
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -109,7 +110,7 @@ export interface Alert {
 }
 
 export interface Message {
-  role: "ai" | "patient";
+  role: "ai" | "patient" | "doctor";
   content: string;
   content_type: string;
   media_url?: string;

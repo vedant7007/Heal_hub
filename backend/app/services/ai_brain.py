@@ -168,23 +168,8 @@ async def process_message(patient_id: str, message_text: str, message_type: str 
     prompt = SYSTEM_PROMPT.format(**context)
     user_msg = f"Patient message ({message_type}): {message_text}"
 
-    # Try Gemini first
-    print(f"[AI_BRAIN] Attempting Gemini...")
-    print(f"[AI_BRAIN] GEMINI_API_KEY present: {bool(settings.GEMINI_API_KEY)} (len={len(settings.GEMINI_API_KEY) if settings.GEMINI_API_KEY else 0})")
-    try:
-        result = await _call_gemini(prompt, user_msg)
-        if result:
-            print(f"[AI_BRAIN] Gemini SUCCESS!")
-            return result
-        else:
-            print(f"[AI_BRAIN] Gemini returned None (no API key?)")
-    except Exception as e:
-        print(f"[AI_BRAIN] Gemini FAILED: {type(e).__name__}: {e}")
-        traceback.print_exc()
-
-    # Fallback to Claude
-    print(f"[AI_BRAIN] Attempting Claude fallback...")
-    print(f"[AI_BRAIN] ANTHROPIC_API_KEY present: {bool(settings.ANTHROPIC_API_KEY)} (len={len(settings.ANTHROPIC_API_KEY) if settings.ANTHROPIC_API_KEY else 0})")
+    # Try Claude FIRST (primary) — Gemini free tier is quota-exhausted
+    print(f"[AI_BRAIN] Attempting Claude (PRIMARY)...")
     try:
         result = await _call_claude(prompt, user_msg)
         if result:
@@ -196,16 +181,28 @@ async def process_message(patient_id: str, message_text: str, message_type: str 
         print(f"[AI_BRAIN] Claude FAILED: {type(e).__name__}: {e}")
         traceback.print_exc()
 
-    # Final fallback
+    # Fallback to Gemini
+    print(f"[AI_BRAIN] Attempting Gemini (fallback)...")
+    try:
+        result = await _call_gemini(prompt, user_msg)
+        if result:
+            print(f"[AI_BRAIN] Gemini SUCCESS!")
+            return result
+        else:
+            print(f"[AI_BRAIN] Gemini returned None")
+    except Exception as e:
+        print(f"[AI_BRAIN] Gemini FAILED: {type(e).__name__}: {e}")
+
+    # Final fallback — should almost never reach here
     print(f"[AI_BRAIN] ALL AI SERVICES FAILED — returning generic fallback")
     return {
-        "reply_to_patient": "Thank you for your update. I've noted your response and your doctor will review it.",
+        "reply_to_patient": "I'm here to help with your recovery. Could you tell me more about how you're feeling right now?",
         "detected_symptoms": [],
         "pain_score": None,
         "medicine_taken": None,
         "risk_level": "green",
         "risk_score": 10,
-        "reasoning": "AI services temporarily unavailable",
+        "reasoning": "AI services temporarily unavailable, asked patient for more info",
         "recommended_action": "Continue monitoring",
         "escalation_needed": False,
         "escalation_level": 0,

@@ -183,3 +183,72 @@ async def call_patient(patient_id: str, doctor=Depends(get_current_doctor)):
     except Exception as e:
         logger.warning(f"Voice call failed: {e}")
         raise HTTPException(status_code=500, detail=f"Call failed: {str(e)}")
+
+
+@router.post("/{patient_id}/handoff")
+async def toggle_handoff(patient_id: str, body: dict, doctor=Depends(get_current_doctor)):
+    """Toggle between AI mode and doctor mode for a patient's conversation."""
+    mode = body.get("mode", "ai")
+    if mode not in ("ai", "doctor"):
+        raise HTTPException(status_code=400, detail="Mode must be 'ai' or 'doctor'")
+
+    result = await patients_collection.update_one(
+        {"_id": ObjectId(patient_id)},
+        {"$set": {"mode": mode, "updated_at": utc_now()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    logger.info(f"Patient {patient_id} handoff mode set to: {mode}")
+    return {"message": f"Mode set to {mode}", "mode": mode}
+
+
+@router.post("/{patient_id}/reply")
+async def doctor_reply(patient_id: str, body: dict, doctor=Depends(get_current_doctor)):
+    """Send a doctor's reply to the patient via WhatsApp."""
+    message = body.get("message", "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    patient = await patients_collection.find_one({"_id": ObjectId(patient_id)})
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    doctor_name = doctor.get("name", "Your Doctor")
+    wa_message = f"Dr. {doctor_name}: {message}"
+
+    try:
+        from app.services.whatsapp import send_message as wa_send
+        await wa_send(patient["phone"], wa_message)
+    except Exception as e:
+        logger.warning(f"WhatsApp doctor reply failed: {e}")
+
+    await conversations_collection.update_one(
+        {"patient_id": patient_id},
+        {
+            "$push": {
+                "messages": {
+                    "role": "doctor",
+                    "content": message,
+                    "content_type": "text",
+                    "language": "en",
+                    "timestamp": utc_now(),
+                }
+            },
+            "$set": {"updated_at": utc_now()},
+        },
+    )
+
+    try:
+        from app.main import sio
+        await sio.emit("new_message", {
+            "patient_id": patient_id,
+            "doctor_name": doctor_name,
+            "content": message,
+            "role": "doctor",
+            "timestamp": utc_now().isoformat(),
+        })
+    except Exception:
+        pass
+
+    return {"message": "Reply sent"}

@@ -146,6 +146,52 @@ async def whatsapp_webhook(request: Request):
                 print(f"[WEBHOOK] Report FAILED: {e}")
             return PlainTextResponse(XML_OK, media_type="text/xml")
 
+        # Check handoff mode — if doctor has taken over, skip AI
+        patient_mode = patient.get("mode", "ai")
+        print(f"[WEBHOOK] Patient mode: {patient_mode}")
+
+        if patient_mode == "doctor":
+            print(f"[WEBHOOK] Doctor mode — skipping AI, saving message for doctor")
+            # Save patient message to conversation
+            detected_lang = "en"
+            try:
+                from app.services.translator import detect_language
+                detected_lang = detect_language(message_text)
+            except Exception:
+                pass
+
+            await conversations_collection.update_one(
+                {"patient_id": patient_id},
+                {
+                    "$push": {
+                        "messages": {
+                            "role": "patient",
+                            "content": message_text,
+                            "content_type": message_type,
+                            "media_url": media_url,
+                            "language": detected_lang,
+                            "timestamp": utc_now(),
+                        }
+                    },
+                    "$set": {"updated_at": utc_now()},
+                },
+                upsert=True,
+            )
+            # Emit socket event so doctor sees it in real-time
+            try:
+                from app.main import sio
+                await sio.emit("new_message", {
+                    "patient_id": patient_id,
+                    "patient_name": patient["name"],
+                    "content": message_text,
+                    "content_type": message_type,
+                    "timestamp": utc_now().isoformat(),
+                })
+            except Exception as e:
+                print(f"[WEBHOOK] Socket emit failed: {e}")
+            print(f"[WEBHOOK] Message saved for doctor review")
+            return PlainTextResponse(XML_OK, media_type="text/xml")
+
         # Translate to English for AI processing
         detected_lang = "en"
         english_text = message_text
@@ -174,7 +220,7 @@ async def whatsapp_webhook(request: Request):
             print(f"[WEBHOOK] AI brain FAILED: {e}")
             traceback.print_exc()
             ai_response = {
-                "reply_to_patient": "Thank you for your message. Your doctor has been notified.",
+                "reply_to_patient": "I'm here to help with your recovery. Could you tell me more about how you're feeling?",
                 "detected_symptoms": [],
                 "risk_level": "green",
                 "risk_score": 0,
@@ -183,7 +229,15 @@ async def whatsapp_webhook(request: Request):
                 "escalation_level": 0,
             }
 
-        reply = ai_response.get("reply_to_patient", "Thank you for your update.")
+        # Reject generic/fallback replies — never send "doctor will review" type messages
+        reply = ai_response.get("reply_to_patient", "")
+        generic_phrases = ["doctor will review", "noted your response", "doctor has been notified", "thank you for your update"]
+        is_generic = any(phrase in reply.lower() for phrase in generic_phrases)
+        if is_generic or not reply.strip():
+            print(f"[WEBHOOK] REJECTED generic reply: '{reply[:80]}' — using fallback question")
+            reply = f"Hi {patient.get('name', 'there')}! How are you feeling right now? Any pain, swelling, or fever? Please describe your symptoms so I can help you better."
+            ai_response["reply_to_patient"] = reply
+
         print(f"[WEBHOOK] Reply to send: {reply[:100]}")
 
         # Save conversation
