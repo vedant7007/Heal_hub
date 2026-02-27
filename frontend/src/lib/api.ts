@@ -47,6 +47,12 @@ export const sendMessage = (id: string, message: string) =>
 export const callPatient = (id: string) =>
   api.post(`/api/patients/${id}/call`);
 
+export const setHandoffMode = (id: string, mode: "ai" | "doctor") =>
+  api.post(`/api/patients/${id}/handoff`, { mode });
+
+export const doctorReply = (id: string, message: string) =>
+  api.post(`/api/patients/${id}/reply`, { message });
+
 // Check-ins
 export const getCheckins = (patientId: string) =>
   api.get(`/api/checkins/${patientId}`);
